@@ -96,8 +96,13 @@ def DippingNet_step(args, gts, inputs):
     merges_masked1[mask_padded == False] = gts_padded[mask_padded == False]
 
     # send false-masked point to far away so that it won't be chosen while calculating distances
-    merges_masked2 = merges.clone()
-    merges_masked2[mask_padded == False] = torch.ones(1, 3).cuda() * 100
+    # merges_masked2 = merges.clone()
+    # merges_masked2[mask_padded == False] = torch.ones(1, 3).cuda() * 100
+
+    # make output points
+    # set false-masked points (0, 0, 0)
+    outputs = merges.clone()
+    outputs[mask_padded == False] = torch.zeros(1, 3).cuda()
 
     dist1, dist2 = eval(args.dist_fun)()(merges_masked1, gts)
 
@@ -106,11 +111,6 @@ def DippingNet_step(args, gts, inputs):
     dist2 = dist2.data.cpu().numpy()
 
     emd_cost = np.array([0] * args.batch_size)
-
-    # make output points
-    # set false-masked points (0, 0, 0)
-    outputs = merges_masked1.clone()
-    outputs[mask_padded == False] = torch.zeros(1, 3).cuda()
 
     if args.model.training:
         return loss, dist1, dist2, emd_cost, outputs.data.cpu().numpy()
