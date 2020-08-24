@@ -70,6 +70,7 @@ def DippingNet_step(args, gts, inputs):
         (B, N + S, 3)
     """
     probs, merges = args.model.forward(inputs, args.sauce)
+    print (probs)
     gts = gts.cuda()
 
     masks_gt = make_mask_gt(args.sauce.cuda(), gts, 1)
@@ -80,6 +81,7 @@ def DippingNet_step(args, gts, inputs):
     S = args.nsauce
 
     mask = probs.round().bool()
+    #print (torch.sum(mask.long()))
     pad_mask = torch.ones(B, N_in, 1).cuda().bool()
     pad_gts = torch.zeros(B, N_in + S - N_gt, 3).cuda()
     # (bs, N + S, 1)
