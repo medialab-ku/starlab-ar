@@ -1,11 +1,9 @@
-import os
 import sys
 import h5py
 import numpy as np
 import open3d as o3d
 
 h5path = sys.argv[1]
-print (h5path)
 h5file = h5py.File(h5path, 'r')
 
 for key1 in h5file.keys():
