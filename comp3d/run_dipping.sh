@@ -31,3 +31,4 @@ python -u $PROGRAM --epochs $EPOCHS --lr $LR --batch_size $BATCH_SIZE \
     --nworkers  $NWORKERS --NET $NET --dataset $DATASET \
     --mode $MODE --optim $OPTIM --code_nfts $CODE_NFTS --resume $RESUME --dist_fun $DIST_FUN \
     --nsauce $NSAUCE --inpts $INPTS --ngtpts $NGTPTS --rotaug $ROTAUG
+
