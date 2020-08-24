@@ -8,6 +8,7 @@ from ShellNet import *
 from common import weights_init
 from dist_chamfer import chamferDist as chamfer
 from data_utils import make_mask_gt
+from focal_loss import FocalLoss
 
 import open3d as o3d
 
@@ -73,7 +74,9 @@ def DippingNet_step(args, gts, inputs):
     gts = gts.cuda()
 
     masks_gt = make_mask_gt(args.sauce.cuda(), gts, 1)
-    bce = torch.nn.BCELoss()(probs, masks_gt)
+    focal_loss_module = FocalLoss()
+    focal_loss = focal_loss_module(probs, masks_gt.long())
+    #bce = torch.nn.BCELoss()(probs, masks_gt)
 
     B, N_in, _ = inputs.size()
     _, N_gt, _ = gts.size()
@@ -96,21 +99,21 @@ def DippingNet_step(args, gts, inputs):
     merges_masked1[mask_padded == False] = gts_padded[mask_padded == False]
 
     # send false-masked point to far away so that it won't be chosen while calculating distances
-    merges_masked2 = merges.clone()
-    merges_masked2[mask_padded == False] = torch.ones(1, 3).cuda() * 100
+    # merges_masked2 = merges.clone()
+    # merges_masked2[mask_padded == False] = torch.ones(1, 3).cuda() * 100
+
+    # make output points
+    # set false-masked points (0, 0, 0)
+    outputs = merges.clone()
+    outputs[mask_padded == False] = torch.zeros(1, 3).cuda()
 
     dist1, dist2 = eval(args.dist_fun)()(merges_masked1, gts)
 
-    loss = torch.mean(dist1) + bce
+    loss = torch.mean(dist1) + focal_loss
     dist1 = dist1.data.cpu().numpy()
     dist2 = dist2.data.cpu().numpy()
 
     emd_cost = np.array([0] * args.batch_size)
-
-    # make output points
-    # set false-masked points (0, 0, 0)
-    outputs = merges_masked1.clone()
-    outputs[mask_padded == False] = torch.zeros(1, 3).cuda()
 
     if args.model.training:
         return loss, dist1, dist2, emd_cost, outputs.data.cpu().numpy()
