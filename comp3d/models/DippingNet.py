@@ -83,6 +83,7 @@ def DippingNet_step(args, gts, inputs):
     S = args.nsauce
 
     mask = probs.round().bool()
+    num_true = B * S - torch.sum(mask)
     pad_mask = torch.ones(B, N_in, 1).cuda().bool()
     pad_gts = torch.zeros(B, N_in + S - N_gt, 3).cuda()
     # (bs, N + S, 1)
@@ -109,7 +110,7 @@ def DippingNet_step(args, gts, inputs):
 
     dist1, dist2 = eval(args.dist_fun)()(merges_masked1, gts)
 
-    loss = torch.mean(dist1) + focal_loss
+    loss = (torch.sum(dist1) / num_true) + focal_loss
     dist1 = dist1.data.cpu().numpy()
     dist2 = dist2.data.cpu().numpy()
 
