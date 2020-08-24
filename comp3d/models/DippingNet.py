@@ -74,7 +74,7 @@ def DippingNet_step(args, gts, inputs):
     gts = gts.cuda()
 
     masks_gt = make_mask_gt(args.sauce.cuda(), gts, 1)
-    focal_loss_module = FocalLoss(gamma=2)
+    focal_loss_module = FocalLoss()
     focal_loss = focal_loss_module(probs, masks_gt.long())
     #bce = torch.nn.BCELoss()(probs, masks_gt)
 
@@ -109,8 +109,7 @@ def DippingNet_step(args, gts, inputs):
 
     dist1, dist2 = eval(args.dist_fun)()(merges_masked1, gts)
 
-    #loss = torch.mean(dist1) + focal_loss
-    loss = focal_loss
+    loss = torch.mean(dist1) + focal_loss
     dist1 = dist1.data.cpu().numpy()
     dist2 = dist2.data.cpu().numpy()
 
