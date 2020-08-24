@@ -8,6 +8,7 @@ from ShellNet import *
 from common import weights_init
 from dist_chamfer import chamferDist as chamfer
 from data_utils import make_mask_gt
+from focal_loss import FocalLoss
 
 import open3d as o3d
 
@@ -74,7 +75,9 @@ def DippingNet_step(args, gts, inputs):
     gts = gts.cuda()
 
     masks_gt = make_mask_gt(args.sauce.cuda(), gts, 1)
-    bce = torch.nn.BCELoss()(probs, masks_gt)
+    focal_loss_module = FocalLoss()
+    focal_loss = focal_loss_module(probs, masks_gt)
+    #bce = torch.nn.BCELoss()(probs, masks_gt)
 
     B, N_in, _ = inputs.size()
     _, N_gt, _ = gts.size()
@@ -108,7 +111,7 @@ def DippingNet_step(args, gts, inputs):
 
     dist1, dist2 = eval(args.dist_fun)()(merges_masked1, gts)
 
-    loss = torch.mean(dist1) + bce
+    loss = torch.mean(dist1) + focal_loss
     dist1 = dist1.data.cpu().numpy()
     dist2 = dist2.data.cpu().numpy()
 
