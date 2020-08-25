@@ -315,15 +315,15 @@ class ShellNet_Feature(nn.Module):
         self.fc3 = Dense(features[1], out_dim, has_bn=has_bn)
 
     def forward(self, inputs):
-        query1 = random_sample(inputs, self.num_points // 2)
+        query1 = random_sample(inputs, int(self.num_points // 2))
         sconv1 = self.shellconv1(inputs, query1, None)
         # print("sconv1.shape = ", sconv1.shape)
 
-        query2 = random_sample(query1, self.num_points // 4)
+        query2 = random_sample(query1, int(self.num_points // 4))
         sconv2 = self.shellconv2(query1, query2, sconv1)
         # print("sconv2.shape = ", sconv2.shape)
 
-        query3 = random_sample(query2, self.num_points // 8)
+        query3 = random_sample(query2, int(self.num_points // 8))
         sconv3 = self.shellconv3(query2, query3, sconv2)
         # print("sconv3.shape = ", sconv3.shape)
 
@@ -363,15 +363,15 @@ class ShellNet_RI_Feature(nn.Module):
         self.fc3 = Dense(features[1], out_dim, has_bn=has_bn)
 
     def forward(self, inputs):
-        query1 = random_sample(inputs, self.num_points // 2)
+        query1 = random_sample(inputs, int(self.num_points // 2))
         sconv1 = self.shellconv1(inputs, query1, None)
         # print("sconv1.shape = ", sconv1.shape)
 
-        query2 = random_sample(query1, self.num_points // 4)
+        query2 = random_sample(query1, int(self.num_points // 4))
         sconv2 = self.shellconv2(query1, query2, sconv1)
         # print("sconv2.shape = ", sconv2.shape)
 
-        query3 = random_sample(query2, self.num_points // 8)
+        query3 = random_sample(query2, int(self.num_points // 8))
         sconv3 = self.shellconv3(query2, query3, sconv2)
         # print("sconv3.shape = ", sconv3.shape)
 
@@ -413,15 +413,15 @@ class ShellNet_Seg(nn.Module):
         self.fc3 = Dense(features[1], num_class, has_bn=has_bn)
 
     def forward(self, inputs):
-        query1 = random_sample(inputs, self.num_points // 2)
+        query1 = random_sample(inputs, int(self.num_points // 2))
         sconv1 = self.shellconv1(inputs, query1, None)
         # print("sconv1.shape = ", sconv1.shape)
 
-        query2 = random_sample(query1, self.num_points // 4)
+        query2 = random_sample(query1, int(self.num_points // 4))
         sconv2 = self.shellconv2(query1, query2, sconv1)
         # print("sconv2.shape = ", sconv2.shape)
 
-        query3 = random_sample(query2, self.num_points // 8)
+        query3 = random_sample(query2, int(self.num_points // 8))
         sconv3 = self.shellconv3(query2, query3, sconv2)
         # print("sconv3.shape = ", sconv3.shape)
 
@@ -468,15 +468,15 @@ class ShellNet_RI_Seg(nn.Module):
         self.fc3 = Dense(features[1], num_class, has_bn=has_bn)
 
     def forward(self, inputs):
-        query1 = random_sample(inputs, self.num_points // 2)
+        query1 = random_sample(inputs, int(self.num_points // 2))
         sconv1 = self.shellconv1(inputs, query1, None)
         # print("sconv1.shape = ", sconv1.shape)
 
-        query2 = random_sample(query1, self.num_points // 4)
+        query2 = random_sample(query1, int(self.num_points // 4))
         sconv2 = self.shellconv2(query1, query2, sconv1)
         # print("sconv2.shape = ", sconv2.shape)
 
-        query3 = random_sample(query2, self.num_points // 8)
+        query3 = random_sample(query2, int(self.num_points // 8))
         sconv3 = self.shellconv3(query2, query3, sconv2)
         # print("sconv3.shape = ", sconv3.shape)
 
