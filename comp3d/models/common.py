@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
+from ShellNet import *
 
 class STN3d(nn.Module):
     def __init__(self, args, num_points=2500):
