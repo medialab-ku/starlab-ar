@@ -72,6 +72,7 @@ def DippingNet_step(args, gts, inputs):
     """
     probs, merges = args.model.forward(inputs, args.sauce)
     gts = gts.cuda()
+    print (probs)
 
     masks_gt = make_mask_gt(args.sauce.cuda(), gts, 1)
     focal_loss_module = FocalLoss()
@@ -118,9 +119,9 @@ def DippingNet_step(args, gts, inputs):
     emd_cost = np.array([0] * args.batch_size)
 
     if args.model.training:
-        return loss, dist1, dist2, emd_cost, outputs.data.cpu().numpy()
+        return {'loss':loss, 'dist1':dist1, 'dist2':dist2, 'emd_cost':emd_cost, 'outputs':outputs.data.cpu().numpy()}
     else:
-        return loss.item(), dist1, dist2, emd_cost, outputs.data.cpu().numpy()
+        return {'loss':loss.item(), 'dist1':dist1, 'dist2':dist2, 'emd_cost':emd_cost, 'outputs':outputs.data.cpu().numpy()}
 
 
 class PointClsCon(nn.Module):

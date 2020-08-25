@@ -139,7 +139,12 @@ def train(args, epoch, data_loader, writer):
 
         args.optimizer.zero_grad()
 
-        loss, dist1, dist2, emd_cost, outputs = args.step(args, gts.float().cuda(), partials.float().cuda())
+        results = args.step(args, gts.float().cuda(), partials.float().cuda())
+        loss = results['loss']
+        dist1 = results['dist1']
+        dist2 = results['dist2']
+        emd_cost = results['emd_cost']
+        outputs = results['outputs']
         loss.backward()
 
         args.optimizer.step()
@@ -189,7 +194,12 @@ def test(split, args):
         t_loader = 1000 * (time.time() - t0)
         t0 = time.time()
 
-        loss, dist1, dist2, emd_cost, outputs = args.step(args, gts.float().cuda(), partials.float().cuda())
+        results = args.step(args, gts.float().cuda(), partials.float().cuda())
+        loss = results['loss']
+        dist1 = results['dist1']
+        dist2 = results['dist2']
+        emd_cost = results['emd_cost']
+        outputs = results['outputs']
 
         t_trainer = 1000 * (time.time() - t0)
         losses = [loss, ]
@@ -237,7 +247,12 @@ def samples(split, args, N):
                 run_net = True
                 break
         if run_net:
-            loss, dist1, dist2, emd_cost, outputs = args.step(args, gts.float().cuda(), partials.float().cuda())
+            results = args.step(args, gts.float().cuda(), partials.float().cuda())
+            loss = results['loss']
+            dist1 = results['dist1']
+            dist2 = results['dist2']
+            emd_cost = results['emd_cost']
+            outputs = results['outputs']
 
             for idx in range(gts.shape[0]):
                 if hasattr(args, 'classmap'):
@@ -282,7 +297,12 @@ def metrics(split, args, epoch=0):
     dataloader_iter = iter(val_dataloader)
     for bidx in tqdm(range(Nb)):
         gts, partials, metas = next(dataloader_iter)
-        loss, dist1, dist2, emd_cost, outputs = args.step(args, gts.float().cuda(), partials.float().cuda())
+        results = args.step(args, gts.float().cuda(), partials.float().cuda())
+        loss = results['loss']
+        dist1 = results['dist1']
+        dist2 = results['dist2']
+        emd_cost = results['emd_cost']
+        outputs = results['outputs']
         dgens = batch_instance_metrics(args, dist1, dist2)
         for idx in range(gts.shape[0]):
             if hasattr(args, 'classmap'):
