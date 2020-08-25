@@ -11,7 +11,7 @@ NSAUCE=2048
 NET='AtlasNet'
 CODE_NFTS=1024
 DIST_FUN='chamfer'
-NB_PRIMITIVES=4
+NB_PRIMITIVES=16
 
 # Training Parameters
 MODE='train'
@@ -30,4 +30,4 @@ PROGRAM="main.py"
 python -u $PROGRAM --epochs $EPOCHS --lr $LR --batch_size $BATCH_SIZE \
     --nworkers  $NWORKERS --NET $NET --dataset $DATASET \
     --mode $MODE --optim $OPTIM --code_nfts $CODE_NFTS --resume $RESUME --dist_fun $DIST_FUN \
-    --npts $NPTS --nsauce $NSAUCE --inpts $INPTS --ngtpts $NGTPTS
+    --npts $NPTS --nsauce $NSAUCE --inpts $INPTS --ngtpts $NGTPTS --nb_primitives $NB_PRIMITIVES
