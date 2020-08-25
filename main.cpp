@@ -31,6 +31,12 @@ int main()
 			labels.push_back(line);
 	}
 
+	// print labels
+	cout << "Labels:" << endl;
+	for (const auto& label : labels)
+		cout << label << endl;
+	cout << endl;
+
 	// read colors
 	vector<Scalar> colors;
 	{
@@ -46,6 +52,12 @@ int main()
 		}
 	}
 
+	// print colors
+	cout << "Colors:" << endl;
+	for (const auto& color : colors)
+		cout << color[0] << "\t" << color[1] << "\t" << color[2] << endl;
+	cout << endl;
+
 	// weight and graph files for model
 	String weight = "mask_rcnn_inception_v2_coco_2018_01_28.pb";
 	String graph = "mask_rcnn_inception_v2_coco_2018_01_28.pbtxt";
@@ -56,6 +68,18 @@ int main()
 	// network setting
 	net.setPreferableBackend(DNN_BACKEND_OPENCV);
 	net.setPreferableTarget(DNN_TARGET_OPENCL);
+
+	// create input from image
+	Mat input;
+	blobFromImage(image, input, 1.0, Size(image.cols, image.rows), Scalar(), true, false);
+
+	// set network input
+	net.setInput(input);
+
+	// run network
+	vector<String> names{ "detection_out_final", "detection_masks" };
+	vector<Mat> output;
+	net.forward(output, names);
 
 	// exit program
 	return EXIT_SUCCESS;
