@@ -46,6 +46,17 @@ int main()
 		}
 	}
 
+	// weight and graph files for model
+	String weight = "mask_rcnn_inception_v2_coco_2018_01_28.pb";
+	String graph = "mask_rcnn_inception_v2_coco_2018_01_28.pbtxt";
+
+	// read network
+	Net net = readNetFromTensorflow(weight, graph);
+
+	// network setting
+	net.setPreferableBackend(DNN_BACKEND_OPENCV);
+	net.setPreferableTarget(DNN_TARGET_OPENCL);
+
 	// exit program
 	return EXIT_SUCCESS;
 }
