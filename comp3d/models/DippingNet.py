@@ -72,11 +72,11 @@ def DippingNet_step(args, gts, inputs):
     """
     probs, merges = args.model.forward(inputs, args.sauce)
     gts = gts.cuda()
-    print (probs)
+    #print (probs)
 
-    masks_gt = make_mask_gt(args.sauce.cuda(), gts, 1)
-    focal_loss_module = FocalLoss()
-    focal_loss = focal_loss_module(probs, masks_gt)
+    #masks_gt = make_mask_gt(args.sauce.cuda(), gts, 1)
+    #focal_loss_module = FocalLoss()
+    #focal_loss = focal_loss_module(probs, masks_gt)
     #bce = torch.nn.BCELoss()(probs, masks_gt)
 
     B, N_in, _ = inputs.size()
@@ -111,8 +111,9 @@ def DippingNet_step(args, gts, inputs):
 
     dist1, dist2 = eval(args.dist_fun)()(merges_masked1, gts)
 
-    a, b = 1.0, 1.0
-    loss = ((torch.sum(dist1) / num_true) * a) + (focal_loss * b)
+    # a, b = 1.0, 1.0
+    # loss = ((torch.sum(dist1) / num_true) * a) + (focal_loss * b)
+    loss = torch.sum(dist1) / num_true
     dist1 = dist1.data.cpu().numpy()
     dist2 = dist2.data.cpu().numpy()
 
@@ -168,12 +169,12 @@ class DippingNet(nn.Module):
 
         # (bs, feat) -> (bs, nsauce, feat)
         x = x.repeat_interleave(nsauce, dim=0)
-        x = x.reshape(batch_size, nsauce, -1)
+        x = x.view(batch_size, nsauce, -1)
 
         # (nsauce, 3) -> (bs, nsauce, 3)
         sauce = Variable(sauce, requires_grad=True)
         sauce = sauce.repeat(batch_size, 1)
-        sauce = sauce.reshape(batch_size, nsauce, -1)
+        sauce = sauce.view(batch_size, nsauce, -1)
 
         # (bs, nsauce, feat) -> (bs, nsauce, 3 + feat)
         x = torch.cat((sauce, x), dim=2)
