@@ -124,7 +124,7 @@ def train(args, epoch, data_loader, writer):
 
     meters = []
     # Names of losses used
-    lnm = ['loss']
+    lnm = ['train_loss']
     Nl = len(lnm)
     for i in range(Nl):
         meters.append(tnt.meter.AverageValueMeter())
@@ -157,9 +157,11 @@ def train(args, epoch, data_loader, writer):
 
         if (bidx % 50) == 0:
             prt = 'Train '
+            plot_dict = {}
             for ix in range(Nl):
                 prt += '%s %f, ' % (lnm[ix], losses[ix].item())
-                writer.add_scalar(lnm[ix], losses[ix].item(), epoch * Nb + bidx)
+                plot_dict[lnm[ix]] = losses[ix].item()
+            writer.add_scalar('train', plot_dict, epoch * Nb + bidx)
             prt += 'Loader %f ms, Train %f ms.\n' % (t_loader, t_trainer)
             print(prt)
         logging.debug('Batch loss %f, Loader time %f ms, Trainer time %f ms.', loss.item(), t_loader, t_trainer)
@@ -168,7 +170,7 @@ def train(args, epoch, data_loader, writer):
     return [meters[ix].value()[0] for ix in range(Nl)]
 
 
-def test(split, args):
+def test(split, args, epoch, writer):
     """ Evaluated model on test set """
     print("Testing....")
     args.model.eval()
@@ -176,7 +178,7 @@ def test(split, args):
     test_dataloader = data_setup(args, 'test', num_workers=1)
 
     meters = []
-    lnm = ['loss', ]
+    lnm = ['val_loss', ]
     Nl = len(lnm)
     for i in range(Nl):
         meters.append(tnt.meter.AverageValueMeter())
@@ -208,6 +210,11 @@ def test(split, args):
 
         logging.debug('Batch loss %f, Loader time %f ms, Trainer time %f ms.', loss, t_loader, t_trainer)
         t0 = time.time()
+
+    plot_dict = {}
+    for ix, m in enumerate(meters):
+        plot_dict[lnm[ix]] = m.value()[0]
+    writer.add_scalar('val', plot_dict, epoch)
 
     return [meters[ix].value()[0] for ix in range(Nl)]
 

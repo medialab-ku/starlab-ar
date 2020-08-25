@@ -72,7 +72,7 @@ def main():
             loss = train(args, epoch, train_dataloader, writer)[0]
 
             if (epoch+1) % args.test_nth_epoch == 0 or epoch+1==args.epochs:
-                loss_val = test('val', args)[0]
+                loss_val = test('val', args, epoch, writer)[0]
                 print('-> Train Loss: {}, \tVal loss: {}'.format(loss, loss_val))
                 stats.append({'epoch': epoch + 1, 'loss': loss, 'loss_val': loss_val})
             else:
