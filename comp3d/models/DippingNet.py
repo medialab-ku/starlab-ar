@@ -83,7 +83,8 @@ def DippingNet_step(args, gts, inputs):
     S = args.nsauce
 
     mask = probs.round().bool()
-    num_true = B * S - torch.sum(mask)
+    num_true = B * N_in + torch.sum(mask)
+    print (num_true)
     pad_mask = torch.ones(B, N_in, 1).cuda().bool()
     pad_gts = torch.zeros(B, N_in + S - N_gt, 3).cuda()
     # (bs, N + S, 1)
