@@ -1,4 +1,5 @@
 """
+https://wordbe.tistory.com/entry/ML-Cross-entropyCategorical-Binary%EC%9D%98-%EC%9D%B4%ED%95%B4
 https://github.com/mbsariyildiz/focal_loss
 """
 
@@ -18,12 +19,11 @@ class FocalLoss(nn.Module):
 
     def forward(self, input, target):
         input = input.contiguous().view(-1, input.size(2))    # N,H*W,C => N*H*W,C
-        target = target.contiguous().view(-1, target.size(2))
+        target = target.long().contiguous().view(-1, target.size(2))
 
-        logpt = F.log_softmax(input, dim=1)
-        logpt = logpt.gather(1,target)
-        logpt = logpt.view(-1)
-        pt = logpt.exp()
+        pt = input
+        pt = pt.gather(0, target)
+        logpt = pt.log()
 
         if self.alpha is not None:
             if self.alpha.type() != input.data.type():

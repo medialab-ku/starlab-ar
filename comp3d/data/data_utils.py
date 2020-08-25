@@ -191,7 +191,7 @@ def make_mask_gt(sauce, gtpts, K):
     for i in range(sauce.size(0)):
         m = mask[i]
         idx = knn_indices[i]
-        m[idx] = 1
+        m[idx] = 1.
 
     return mask
 

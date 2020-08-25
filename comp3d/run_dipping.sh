@@ -5,7 +5,7 @@ DATASET='shapenet'
 INPTS=2048
 NGTPTS=2048
 #NPTS=$((1*(2048)))
-NSAUCE=8196
+NSAUCE=8192
 ROTAUG=0
 
 # Model Parameters

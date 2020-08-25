@@ -63,9 +63,11 @@ def AtlasNet_step(args, targets_in, clouds_data):
     dist2 = dist2.data.cpu().numpy()
 
     if args.model.training:
-        return loss, dist1, dist2, emd_cost, outputs.data.cpu().numpy()
+        return {'loss': loss, 'dist1': dist1, 'dist2': dist2, 'emd_cost': emd_cost,
+                'outputs': outputs.data.cpu().numpy()}
     else:
-        return loss.item(), dist1, dist2, emd_cost, outputs.data.cpu().numpy()
+        return {'loss': loss.item(), 'dist1': dist1, 'dist2': dist2, 'emd_cost': emd_cost,
+                'outputs': outputs.data.cpu().numpy()}
 
 
 class PointGenCon(nn.Module):
