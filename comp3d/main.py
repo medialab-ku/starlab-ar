@@ -11,7 +11,7 @@ from AtlasNet_RI import *
 from PointNetFCAE import *
 from DippingNet import *
 from train_utils import train, test, metrics, samples, set_seed, \
-    resume, cache_pred, create_optimizer, model_at, parse_experiment, \
+    resume, cache_pred, create_optimizer, create_scheduler, model_at, parse_experiment, \
     check_overwrite, data_setup
 import emd_module as emd
 import math
@@ -41,11 +41,12 @@ def main():
         if args.mode == 'eval':
             i = best_epoch
         args.resume = model_at(args, i)
-        model, args.optimizer, stats = resume(args, i)
+        model, args.optimizer, args.scheduler, stats = resume(args, i)
     else:
         check_overwrite(os.path.join(args.odir, 'trainlog.txt'))
         model = eval(args.NET + '_create_model')(args)
         args.optimizer = create_optimizer(args, model)
+        args.scheduler = create_scheduler(args, args.optimizer)
         stats = []
     print("Encoder params : %d" % (args.enc_params))
     print("Decoder params : %d" % (args.dec_params))

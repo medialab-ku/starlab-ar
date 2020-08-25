@@ -66,13 +66,14 @@ def resume(args, i):
         args.enc_params = r_args.enc_params
         args.dec_params = r_args.dec_params
         optimizer = create_optimizer(args, model)
+        scheduler = create_scheduler(args, optimizer)
         model.load_state_dict(checkpoint['state_dict'])
         args.start_epoch = checkpoint['epoch']
 
     if 'optimizer' in checkpoint: optimizer.load_state_dict(checkpoint['optimizer'])
     for group in optimizer.param_groups: group['initial_lr'] = args.lr
     stats = json.loads(open(os.path.join(args.odir, 'trainlog.txt')).read())
-    return model, optimizer, stats
+    return model, optimizer, scheduler, stats
 
 
 def create_optimizer(args, model):
@@ -88,6 +89,11 @@ def create_optimizer(args, model):
     elif args.optim == 'rmsprop':
         optimizer = optim.RMSprop(params, lr=args.lr, alpha=0.99, epsilon=1e-8, weight_decay=args.wd)
     return optimizer
+
+
+def create_scheduler(args, optimizer):
+    scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
+    return scheduler
 
 
 def set_seed(seed, cuda=True):
@@ -166,6 +172,8 @@ def train(args, epoch, data_loader, writer):
             print(prt)
         logging.debug('Batch loss %f, Loader time %f ms, Trainer time %f ms.', loss.item(), t_loader, t_trainer)
         t0 = time.time()
+
+    args.scheduler.step()
 
     return [meters[ix].value()[0] for ix in range(Nl)]
 
