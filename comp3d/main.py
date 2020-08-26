@@ -8,6 +8,7 @@ import torch
 from parse_args import parse_args
 from AtlasNet import *
 from AtlasNet_RI import *
+from AtlasNet_ShellNet import *
 from PointNetFCAE import *
 from DippingNet import *
 from train_utils import train, test, metrics, samples, set_seed, \

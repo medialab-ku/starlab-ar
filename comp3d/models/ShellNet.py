@@ -300,6 +300,7 @@ class ShellNet_Feature(nn.Module):
         super(ShellNet_Feature, self).__init__()
         self.num_points = num_points
         self.global_feat = global_feat
+        self.out_dim = out_dim
         filters = [64, 128, 256, 512]
         filters = [int(x / conv_scale) for x in filters]
 
@@ -338,7 +339,7 @@ class ShellNet_Feature(nn.Module):
 
         if self.global_feat:
             output, _ = torch.max(output, 1)
-            output = output.view(-1, 1024)
+            output = output.view(-1, self.out_dim)
 
         return output
 
@@ -348,6 +349,7 @@ class ShellNet_RI_Feature(nn.Module):
         super(ShellNet_RI_Feature, self).__init__()
         self.num_points = num_points
         self.global_feat = global_feat
+        self.out_dim = out_dim
         filters = [64, 128, 256, 512]
         filters = [int(x / conv_scale) for x in filters]
 
@@ -386,7 +388,7 @@ class ShellNet_RI_Feature(nn.Module):
 
         if self.global_feat:
             output, _ = torch.max(output, 1)
-            output = output.view(-1, 1024)
+            output = output.view(-1, self.out_dim)
 
         return output
 

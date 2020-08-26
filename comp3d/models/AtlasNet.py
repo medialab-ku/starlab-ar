@@ -21,6 +21,7 @@ def AtlasNet_setup(args):
     args.odir += '_lr%.4f' % (args.lr)
     args.odir += '_' + args.optim
     args.odir += '_B%d' % (args.batch_size)
+    args.odir += '_rotaug' if args.rotaug else ''
     args.classmap = ''
 
     # generate regular grid
@@ -118,3 +119,18 @@ class AtlasNet(nn.Module):
             y = torch.cat((rand_grid, y), 1).contiguous()
             outs.append(self.decoder[i](y))
         return torch.cat(outs, 2).contiguous().transpose(2, 1).contiguous()
+
+
+def test_net():
+    from parse_args import parse_args
+    args = parse_args()
+    AtlasNet_setup(args)
+    args.model = AtlasNet_create_model(args)
+    gts = torch.randn(args.batch_size, args.ngtpts, 3).cuda()
+    inputs = torch.randn(args.batch_size, args.inpts, 3).cuda()
+    loss, dist1, dist2, emd_cost, outputs = AtlasNet_step(args, gts, inputs)
+    print ('loss', loss, 'dist1', dist1, 'dist2', dist2, 'emd_cost', emd_cost)
+
+
+if __name__ == '__main__':
+    test_net()
