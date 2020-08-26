@@ -5,7 +5,7 @@ DATASET='shapenet'
 INPTS=1024
 NGTPTS=2048
 NPTS=$((1*(2048)))
-NSAUCE=2048
+ROTAUG=1
 
 # Model Parameters
 NET='AtlasNet'
@@ -30,4 +30,5 @@ PROGRAM="main.py"
 python -u $PROGRAM --epochs $EPOCHS --lr $LR --batch_size $BATCH_SIZE \
     --nworkers  $NWORKERS --NET $NET --dataset $DATASET \
     --mode $MODE --optim $OPTIM --code_nfts $CODE_NFTS --resume $RESUME --dist_fun $DIST_FUN \
-    --npts $NPTS --nsauce $NSAUCE --inpts $INPTS --ngtpts $NGTPTS --nb_primitives $NB_PRIMITIVES
+    --npts $NPTS --inpts $INPTS --ngtpts $NGTPTS --nb_primitives $NB_PRIMITIVES \
+    --rotaug $ROTAUG
