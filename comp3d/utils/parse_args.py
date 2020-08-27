@@ -27,6 +27,9 @@ def parse_args():
     parser.add_argument('--NET', default='AtlasNet', help='Network used')
     parser.add_argument('--code_nfts', default=1024, type=int, help='Encoder output feature size')
 
+    # Model
+    parser.add_argument('--nb_primitives', default=4, type=int, help='Number of primitives for AtlasNet')
+
 
     # Point Cloud Distance function
 

@@ -1,8 +1,9 @@
+import _init_paths
 import torch
 from torch.autograd import Variable
 import torch.nn as nn
 from common import PointNetfeat
-from pytorch3d.loss import chamfer_distance as chamfer
+from dist_chamfer import chamferDist as chamfer
 import numpy as np
 
 def PointNetFCAE_setup(args):
@@ -25,10 +26,12 @@ def PointNetFCAE_create_model(args):
     return model
 
 def PointNetFCAE_step(args, targets_in, clouds_data):
-    targets = Variable(torch.from_numpy(targets_in), requires_grad=False).float().cuda()
-    targets = targets.transpose(2, 1).contiguous()
-    inp = Variable(torch.from_numpy(clouds_data[1]), requires_grad=False).float().cuda()
-    outputs =  args.model(inp)[0]
+    #targets = Variable(torch.from_numpy(targets_in), requires_grad=False).float().cuda()
+    targets = Variable(torch.cuda.FloatTensor(targets_in), requires_grad=False).float().cuda()
+    targets = targets.contiguous()
+    inp = Variable(torch.cuda.FloatTensor(clouds_data), requires_grad=True).float().cuda()
+    inp = inp.transpose(2, 1).contiguous()
+    outputs = args.model(inp)[0]
     targets = targets.transpose(2, 1).contiguous()
     N = targets.size()[1]
     dist1, dist2 = eval(args.dist_fun)()(outputs, targets)
@@ -83,3 +86,18 @@ class PointNetFCAE(nn.Module):
         x = x.transpose(2, 1).contiguous()
 
         return x, code
+
+
+def test_net():
+    from parse_args import parse_args
+    args = parse_args()
+    PointNetFCAE_setup(args)
+    args.model = PointNetFCAE_create_model(args)
+    gts = torch.randn(args.batch_size, args.ngtpts, 3).cuda()
+    inputs = torch.randn(args.batch_size, args.inpts, 3).cuda()
+    loss, dist1, dist2, emd_cost, outputs = PointNetFCAE_step(args, gts, inputs)
+    print ('loss', loss, 'dist1', dist1, 'dist2', dist2, 'emd_cost', emd_cost)
+
+
+if __name__ == '__main__':
+    test_net()

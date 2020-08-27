@@ -7,10 +7,12 @@ import json
 import torch
 from parse_args import parse_args
 from AtlasNet import *
+from AtlasNet_RI import *
+from AtlasNet_ShellNet import *
 from PointNetFCAE import *
 from DippingNet import *
 from train_utils import train, test, metrics, samples, set_seed, \
-    resume, cache_pred, create_optimizer, model_at, parse_experiment, \
+    resume, cache_pred, create_optimizer, create_scheduler, model_at, parse_experiment, \
     check_overwrite, data_setup
 import emd_module as emd
 import math
@@ -40,11 +42,12 @@ def main():
         if args.mode == 'eval':
             i = best_epoch
         args.resume = model_at(args, i)
-        model, args.optimizer, stats = resume(args, i)
+        model, args.optimizer, args.scheduler, stats = resume(args, i)
     else:
         check_overwrite(os.path.join(args.odir, 'trainlog.txt'))
         model = eval(args.NET + '_create_model')(args)
         args.optimizer = create_optimizer(args, model)
+        args.scheduler = create_scheduler(args, args.optimizer)
         stats = []
     print("Encoder params : %d" % (args.enc_params))
     print("Decoder params : %d" % (args.dec_params))
@@ -71,7 +74,7 @@ def main():
             loss = train(args, epoch, train_dataloader, writer)[0]
 
             if (epoch+1) % args.test_nth_epoch == 0 or epoch+1==args.epochs:
-                loss_val = test('val', args)[0]
+                loss_val = test('val', args, epoch, writer)[0]
                 print('-> Train Loss: {}, \tVal loss: {}'.format(loss, loss_val))
                 stats.append({'epoch': epoch + 1, 'loss': loss, 'loss_val': loss_val})
             else:

@@ -6,10 +6,11 @@ import torch.nn as nn
 import numpy as np
 from common import PointNetfeat, weights_init
 from dist_chamfer import chamferDist as chamfer
+from ShellNet import *
 
 
-def AtlasNet_setup(args):
-    args.odir = 'results/%s/AtlasNet_%s' % (args.dataset, args.dist_fun)
+def AtlasNet_ShellNet_setup(args):
+    args.odir = 'results/%s/AtlasNet_ShellNet_%s' % (args.dataset, args.dist_fun)
     grain = int(np.sqrt(args.npts / args.nb_primitives))
     grain = grain * 1.0
     n = ((grain + 1) * (grain + 1) * args.nb_primitives)
@@ -21,7 +22,6 @@ def AtlasNet_setup(args):
     args.odir += '_lr%.4f' % (args.lr)
     args.odir += '_' + args.optim
     args.odir += '_B%d' % (args.batch_size)
-    args.odir += '_rotaug' if args.rotaug else ''
     args.classmap = ''
 
     # generate regular grid
@@ -35,9 +35,9 @@ def AtlasNet_setup(args):
     args.grid = grid
 
 
-def AtlasNet_create_model(args):
+def AtlasNet_ShellNet_create_model(args):
     """ Creates model """
-    model = nn.DataParallel(AtlasNet(args, num_points=args.npts, nb_primitives=args.nb_primitives))
+    model = nn.DataParallel(AtlasNet_ShellNet(args, num_points=args.npts, nb_primitives=args.nb_primitives))
     args.enc_params = sum([p.numel() for p in model.module.encoder.parameters()])
     args.dec_params = sum([p.numel() for p in model.module.decoder.parameters()])
     args.nparams = sum([p.numel() for p in model.module.parameters()])
@@ -48,9 +48,9 @@ def AtlasNet_create_model(args):
     return model
 
 
-def AtlasNet_step(args, targets_in, clouds_data):
+def AtlasNet_ShellNet_step(args, targets_in, clouds_data):
     targets = targets_in
-    inp = clouds_data.transpose(2, 1).contiguous()
+    inp = clouds_data.contiguous()
     outputs = args.model.forward(inp, args.grid)
     dist1, dist2 = eval(args.dist_fun)()(outputs, targets)
     # EMD not working in pytorch (see pytorch-setup.md)
@@ -93,14 +93,15 @@ class PointGenCon(nn.Module):
         return x
 
 
-class AtlasNet(nn.Module):
+class AtlasNet_ShellNet(nn.Module):
     def __init__(self, args, num_points=2048, bottleneck_size=1024, nb_primitives=1):
-        super(AtlasNet, self).__init__()
+        super(AtlasNet_ShellNet, self).__init__()
         self.num_points = num_points
         self.bottleneck_size = bottleneck_size
         self.nb_primitives = nb_primitives
         self.encoder = nn.Sequential(
-            PointNetfeat(args, num_points, global_feat=True, trans=False),
+            ShellNet_Feature(num_points, out_dim=bottleneck_size, conv_scale=1, dense_scale=1, has_bn=True,
+                                global_feat=True),
             nn.Linear(1024, self.bottleneck_size),
             nn.BatchNorm1d(self.bottleneck_size),
             nn.ReLU()
@@ -113,10 +114,10 @@ class AtlasNet(nn.Module):
         outs = []
         for i in range(0, self.nb_primitives):
             rand_grid = Variable(torch.cuda.FloatTensor(grid[i]))
-            rand_grid = rand_grid.transpose(0, 1).contiguous().unsqueeze(0)
+            rand_grid = rand_grid.contiguous().unsqueeze(0)
             rand_grid = rand_grid.expand(x.size(0), rand_grid.size(1), rand_grid.size(2)).contiguous()
-            y = x.unsqueeze(2).expand(x.size(0), x.size(1), rand_grid.size(2)).contiguous()
-            y = torch.cat((rand_grid, y), 1).contiguous()
+            y = x.unsqueeze(1).expand(-1, rand_grid.size(1), -1).contiguous()
+            y = torch.cat((rand_grid, y), 2).contiguous()
             outs.append(self.decoder[i](y))
         return torch.cat(outs, 2).contiguous().transpose(2, 1).contiguous()
 
@@ -124,11 +125,11 @@ class AtlasNet(nn.Module):
 def test_net():
     from parse_args import parse_args
     args = parse_args()
-    AtlasNet_setup(args)
-    args.model = AtlasNet_create_model(args)
+    AtlasNet_ShellNet_setup(args)
+    args.model = AtlasNet_ShellNet_create_model(args)
     gts = torch.randn(args.batch_size, args.ngtpts, 3).cuda()
     inputs = torch.randn(args.batch_size, args.inpts, 3).cuda()
-    loss, dist1, dist2, emd_cost, outputs = AtlasNet_step(args, gts, inputs)
+    loss, dist1, dist2, emd_cost, outputs = AtlasNet_ShellNet_step(args, gts, inputs)
     print ('loss', loss, 'dist1', dist1, 'dist2', dist2, 'emd_cost', emd_cost)
 
 

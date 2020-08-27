@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
+from ShellNet import *
 
 class STN3d(nn.Module):
     def __init__(self, args, num_points=2500):
@@ -40,7 +41,7 @@ class PointNetfeat(nn.Module):
     def __init__(self, args, num_points=2500, global_feat=True, trans=False):
         super(PointNetfeat, self).__init__()
         self.args = args
-        #self.stn = STN3d(args, num_points=num_points)
+        self.stn = STN3d(args, num_points=num_points)
         self.conv1 = torch.nn.Conv1d(3, 64, 1)
         self.conv2 = torch.nn.Conv1d(64, 128, 1)
         self.conv3 = torch.nn.Conv1d(128, args.code_nfts, 1)

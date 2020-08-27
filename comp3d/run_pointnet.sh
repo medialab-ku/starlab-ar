@@ -5,13 +5,13 @@ DATASET='shapenet'
 INPTS=1024
 NGTPTS=2048
 NPTS=$((1*(2048)))
-ROTAUG=1
+ROTAUG=0
 
 # Model Parameters
-NET='AtlasNet'
+NET='PointNetFCAE'
 CODE_NFTS=1024
 DIST_FUN='chamfer'
-NB_PRIMITIVES=16
+NB_PRIMITIVES=4
 
 # Training Parameters
 MODE='train'
@@ -30,5 +30,4 @@ PROGRAM="main.py"
 python -u $PROGRAM --epochs $EPOCHS --lr $LR --batch_size $BATCH_SIZE \
     --nworkers  $NWORKERS --NET $NET --dataset $DATASET \
     --mode $MODE --optim $OPTIM --code_nfts $CODE_NFTS --resume $RESUME --dist_fun $DIST_FUN \
-    --npts $NPTS --inpts $INPTS --ngtpts $NGTPTS --nb_primitives $NB_PRIMITIVES \
-    --rotaug $ROTAUG
+    --npts $NPTS --inpts $INPTS --ngtpts $NGTPTS
