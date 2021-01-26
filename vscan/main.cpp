@@ -27,6 +27,59 @@
 #define OBJ_PATH        "models/model_normalized_tri.obj"
 #define PCD_PATH        ("pcds/pcd_vscan_" + std::to_string(j) + ".txt")
 
+void unproject(const std::string& path)
+{
+    // get matrices and viewport info
+    GLdouble modelview[16];
+    GLdouble projection[16];
+    GLint viewport[4];
+    glGetDoublev(GL_MODELVIEW_MATRIX, modelview);
+    glGetDoublev(GL_PROJECTION_MATRIX, projection);
+    glGetIntegerv(GL_VIEWPORT, viewport);
+
+    // read depth buffer
+    static GLfloat depthBuffer[WINDOW_WIDTH * WINDOW_HEIGHT] = {1.f};
+    glReadPixels(0, 0, viewport[2], viewport[3], GL_DEPTH_COMPONENT, GL_FLOAT, depthBuffer);
+
+    // get valid depth indices
+    static std::vector<GLint> validIndices;
+    validIndices.reserve(WINDOW_WIDTH * WINDOW_HEIGHT);
+    validIndices.clear();
+    for (GLint index = 0; index < WINDOW_WIDTH * WINDOW_HEIGHT; index++)
+    {
+        if (depthBuffer[index] < 1.0f)
+        {
+            validIndices.push_back(index);
+        }
+    }
+
+    // compute sample rate
+    GLfloat sampleRate = (GLfloat)validIndices.size() / PCD_SIZE;
+
+    // loop over sampled pixels
+    std::ofstream ofs(path);
+    for (int i = 0; i < PCD_SIZE; i++)
+    {
+        GLfloat winX, winY, winZ;
+        GLdouble posX, posY, posZ;
+
+        // get index
+        int index = validIndices.at((int)(i * sampleRate));
+
+        // compute window coordinates
+        winX = (float)(index % WINDOW_WIDTH);
+        winY = (float)(index / WINDOW_WIDTH);
+        winZ = depthBuffer[index];
+
+        // unproject pixel from window space to world space
+        gluUnProject(winX, winY, winZ, modelview, projection, viewport, &posX, &posY, &posZ);
+
+        // write virtual scan data
+        ofs << std::to_string(posX) << " " << std::to_string(posY) << " " << std::to_string(posZ) << "\n";
+    }
+    ofs.close();
+}
+
 void reshape(int width, int height)
 {
     // set viewport and projection
