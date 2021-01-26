@@ -27,6 +27,25 @@
 #define OBJ_PATH        "models/model_normalized_tri.obj"
 #define PCD_PATH        ("pcds/pcd_vscan_" + std::to_string(j) + ".txt")
 
+
+std::vector<std::string> dirList;
+
+void read_list(const std::string& path)
+{
+    std::ifstream ifs(path);
+
+    std::string line;
+    while (std::getline(ifs, line))
+    {
+        line.erase(std::remove(line.begin(), line.end(), '\n'), line.end());
+        dirList.push_back(line);
+
+        std::cout << line << std::endl;
+    }
+
+    ifs.close();
+}
+
 void draw_obj(const std::string& path)
 {
     // start to draw triangles
