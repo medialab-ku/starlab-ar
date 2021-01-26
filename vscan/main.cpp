@@ -27,6 +27,15 @@
 #define OBJ_PATH        "models/model_normalized_tri.obj"
 #define PCD_PATH        ("pcds/pcd_vscan_" + std::to_string(j) + ".txt")
 
+void reshape(int width, int height)
+{
+    // set viewport and projection
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glViewport(0, 0, width, height);
+    gluPerspective(CAMERA_FOV, (GLdouble)width / height, CAMERA_Z_NEAR, CAMERA_Z_FAR);
+}
+
 void display()
 {
     // enable depth buffer
