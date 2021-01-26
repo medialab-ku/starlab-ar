@@ -27,6 +27,52 @@
 #define OBJ_PATH        "models/model_normalized_tri.obj"
 #define PCD_PATH        ("pcds/pcd_vscan_" + std::to_string(j) + ".txt")
 
+void display()
+{
+    // enable depth buffer
+    glEnable(GL_DEPTH_TEST);
+
+    // set clear color and depth value
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClearDepth(1.0f);
+
+    // clear buffers
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // set random camera view position
+    glm::vec4 eye = glm::rotate(360.0f * std::rand() / RAND_MAX, glm::vec3(1.0f, 0.0f, 0.0f)) *
+                    glm::rotate(360.0f * std::rand() / RAND_MAX, glm::vec3(0.0f, 1.0f, 0.0f)) *
+                    glm::rotate(360.0f * std::rand() / RAND_MAX, glm::vec3(0.0f, 0.0f, 1.0f)) *
+                    glm::vec4((float)CAMERA_DIST, 0.0f, 0.0f, 1.0f);
+
+    // set camera view
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    gluLookAt(eye.x, eye.y, eye.z, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+
+    // draw and unproject object to get virtual scan data
+    static int i = 0, j = 0;
+    draw_obj(dirList.at(i) + "/" + OBJ_PATH);
+    unproject(dirList.at(i) + "/" + PCD_PATH);
+
+    // increase scan number
+    if (++j >= SCAN_NUM)
+    {
+        // reset scan number
+        j = 0;
+
+        // increase model number
+        if (++i >= dirList.size())
+        {
+            // exit program
+            exit(0);    
+        }
+    }
+
+    // swap buffer
+    glutSwapBuffers();
+}
+
 int main(int argc, char **argv)
 {
     // read list file
