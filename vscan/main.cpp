@@ -27,6 +27,71 @@
 #define OBJ_PATH        "models/model_normalized_tri.obj"
 #define PCD_PATH        ("pcds/pcd_vscan_" + std::to_string(j) + ".txt")
 
+void draw_obj(const std::string& path)
+{
+    // start to draw triangles
+    glBegin(GL_TRIANGLES);
+
+    // parse OBJ file
+    tinyobj::ObjReader reader;
+    tinyobj::ObjReaderConfig reader_config;
+    if (!reader.ParseFromFile(path, reader_config))
+    {
+        std::cerr << "Failed to parse OBJ file: " << reader.Error() << std::endl;
+        exit(1);
+    }
+    const auto & attrib = reader.GetAttrib();
+    const auto & shapes = reader.GetShapes();
+
+    // loop over shapes
+    for (size_t s = 0; s < shapes.size(); s++)
+    {
+        // loop over faces
+        size_t index_offset = 0;
+        for (size_t f = 0; f < shapes[s].mesh.num_face_vertices.size(); f++)
+        {
+            // check number of vertices
+            size_t fv = size_t(shapes[s].mesh.num_face_vertices[f]);
+            if (fv != 3)
+            {
+                std::cerr << "Non-triangle face detected" << std::endl;
+                exit(1);
+            }
+
+            // loop over vertices
+            for (size_t v = 0; v < fv; v++)
+            {
+                // get index data
+                tinyobj::index_t idx = shapes[s].mesh.indices[index_offset + v];
+
+                // check if normal is valid
+                if (idx.normal_index >= 0)
+                {
+                    // access to normal
+                    tinyobj::real_t nx = attrib.normals[3*size_t(idx.normal_index)+0];
+                    tinyobj::real_t ny = attrib.normals[3*size_t(idx.normal_index)+1];
+                    tinyobj::real_t nz = attrib.normals[3*size_t(idx.normal_index)+2];
+
+                    // draw normal
+                    glNormal3f(nx, ny, nz);
+                }
+
+                // access to vertex
+                tinyobj::real_t vx = attrib.vertices[3*size_t(idx.vertex_index)+0];
+                tinyobj::real_t vy = attrib.vertices[3*size_t(idx.vertex_index)+1];
+                tinyobj::real_t vz = attrib.vertices[3*size_t(idx.vertex_index)+2];
+
+                // draw vertex
+                glVertex3f(vx, vy, vz);
+            }
+            index_offset += fv;
+        }
+    }
+
+    // end to draw
+    glEnd();
+}
+
 void unproject(const std::string& path)
 {
     // get matrices and viewport info
