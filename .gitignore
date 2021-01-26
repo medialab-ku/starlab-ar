@@ -1,0 +1,15 @@
+# VS Code
+.vscode/
+
+# Python
+__pycache__
+.venv/
+
+# CMake
+build/
+
+# ShapeNet Core
+ShapeNetCore.v2/
+
+# CRN Dataset
+data/
