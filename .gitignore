@@ -1,0 +1,13 @@
+# python
+__pycache__/
+
+# virtualenv
+.venv/
+
+# ignore pycharm project setting files
+.idea/
+
+# results
+logs/
+saved_results/
+pretrain_checkpoints/
