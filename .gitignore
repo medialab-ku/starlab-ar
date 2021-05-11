@@ -1,0 +1,9 @@
+# Python
+.venv/
+__pycache__/
+
+# PyTorch
+*.pt
+
+# Mesh
+*.obj
