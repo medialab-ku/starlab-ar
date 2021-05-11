@@ -1,0 +1,27 @@
+"""
+ShapeInversion Settings
+"""
+
+CHECK_POINT_PATH = 'shinv_can.pt'
+
+DEVICE = 'cuda:0'
+
+TREE_GAN_DEGREES = [1, 2, 2, 2, 2, 2, 64]
+TREE_GAN_FEATS_G = [96, 256, 256, 256, 128, 128, 128, 3]
+TREE_GAN_FEATS_D = [3, 64, 128, 256, 256, 512]
+
+SELECT_NUM_Z = 500
+
+LOSS_WEIGHT_NLL = 0.001
+LOSS_WEIGHT_D   = [0.1]
+
+ITERATION = [200, 200, 200, 200]
+MASKS_K   = [5, 5, 5, 5]
+
+LEARNING_RATES_G = [2e-7, 1e-6, 1e-6, 2e-7]
+LEARNING_RATES_Z = [1e-2, 1e-4, 1e-4, 1e-6]
+
+REG_FPFH_NN     = [30, 100]
+REG_VOXEL_SIZE  = 0.05
+REG_DIST_GLOBAL = 0.05 * 0.5
+REG_DIST_LOCAL  = 0.05 * 0.4
