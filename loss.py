@@ -32,3 +32,33 @@ def square_distance(src, dst):
     dist += torch.sum(dst ** 2, -1).view(B, 1, M) # xm*xm + ym*ym + zm*zm
     return dist
 
+def farthest_point_sample(xyz, npoint):
+    
+    """
+    code borrowed from: http://www.programmersought.com/article/8737853003/#14_query_ball_point_93
+    Input:
+        xyz: pointcloud data, [B, N, C]
+        npoint: number of samples
+    Return:
+        centroids: sampled pointcloud index, [B, npoint]
+    """
+    device = xyz.device
+    B, N, C = xyz.shape
+    centroids = torch.zeros(B, npoint, dtype=torch.long).to(device)
+    distance = torch.ones(B, N).to(device) * 1e10
+    farthest = torch.randint(0, N, (B,), dtype=torch.long).to(device)
+    batch_indices = torch.arange(B, dtype=torch.long).to(device)
+    for i in range(npoint):
+    	# Update the i-th farthest point
+        centroids[:, i] = farthest
+        # Take the xyz coordinate of the farthest point
+        centroid = xyz[batch_indices, farthest, :].view(B, 1, C)
+        # Calculate the Euclidean distance from all points in the point set to this farthest point
+        dist = torch.sum((xyz - centroid) ** 2, -1)
+        # Update distances to record the minimum distance of each point in the sample from all existing sample points
+        mask = dist < distance
+        distance[mask] = dist[mask]
+        # Find the farthest point from the updated distances matrix, and use it as the farthest point for the next iteration
+        farthest = torch.max(distance, -1)[1]
+    return centroids
+
