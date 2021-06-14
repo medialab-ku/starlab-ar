@@ -158,3 +158,25 @@ class kNNLoss(nn.Module):
         var = torch.var(top_dist.mean(dim=2)).mean()
         return var
 
+
+class expansionPenaltyFunction(Function):
+    def forward(ctx, xyz, primitive_size, alpha):
+        assert(primitive_size <= 512)
+        batchsize, n, _ = xyz.size()
+        assert(n % primitive_size == 0)
+        xyz = xyz.contiguous().float().cuda()
+        dist = torch.zeros(batchsize, n, device='cuda').contiguous()
+        assignment = torch.zeros(batchsize, n, device='cuda', dtype=torch.int32).contiguous() - 1
+        neighbor = torch.zeros(batchsize, n * 512,  device='cuda', dtype=torch.int32).contiguous()
+        cost = torch.zeros(batchsize, n * 512, device='cuda').contiguous()
+        mean_mst_length = torch.zeros(batchsize, device='cuda').contiguous()
+        expansion_penalty.forward(xyz, primitive_size, assignment, dist, alpha, neighbor, cost, mean_mst_length)
+        ctx.save_for_backward(xyz, assignment)
+        return dist, assignment, mean_mst_length / (n / primitive_size)
+
+    def backward(ctx, grad_dist, grad_idx, grad_mml):
+        xyz, assignment = ctx.saved_tensors
+        grad_dist = grad_dist.contiguous()
+        grad_xyz = torch.zeros(xyz.size(), device='cuda').contiguous()
+        expansion_penalty.backward(xyz, grad_xyz, grad_dist, assignment)
+        return grad_xyz, None, None
