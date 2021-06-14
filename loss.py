@@ -62,3 +62,43 @@ def farthest_point_sample(xyz, npoint):
         farthest = torch.max(distance, -1)[1]
     return centroids
 
+def query_ball_point(radius, xyz, new_xyz, nsample=500, density_only=True):
+    """
+    code borrowed from: http://www.programmersought.com/article/8737853003/#14_query_ball_point_93
+    Input:
+        radius: local region radius
+        nsample: max sample number in local region
+        xyz: all points, [B, N, C]
+        new_xyz: query points, [B, S, C]
+    Return:
+        group_idx: grouped points index, [B, S, nsample]
+    """
+    
+    device = xyz.device
+    B, N, C = xyz.shape
+    _, S, _ = new_xyz.shape
+    group_idx = torch.arange(N, dtype=torch.long).to(device).view(1, 1, N).repeat([B, S, 1])
+    # sqrdists: [B, S, N] Record the Euclidean distance between the center point and all points
+    sqrdists = square_distance(new_xyz, xyz) # shape (B, S, N)
+    # Find all distances greater than radius^2, its group_idx is directly set to N; the rest retain the original value
+    
+    if not density_only:
+        group_idx[sqrdists > radius ** 2] = N
+        # Do ascending order, the front is greater than radius^2 are N, will be the maximum, so will take the first nsample points directly in the remaining points
+        group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
+        # Considering that there may be points in the previous nsample points that are assigned N (ie, less than nsample points in the spherical area), this point needs to be discarded, and the first point can be used instead.
+        # group_first: [B, S, k], actually copy the value of the first point in group_idx to the dimension of [B, S, K], which is convenient for subsequent replacement.
+        group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
+        # Find the point where group_idx is equal to N
+        mask = group_idx == N
+        # Replace the value of these points with the value of the first point
+        group_idx[mask] = group_first[mask]
+        return group_idx
+    else:
+        raw_mat = torch.zeros(B,S,N)
+        density_mat = torch.zeros(B,S)
+        raw_mat[sqrdists <= radius ** 2] = 1
+        density_mat = torch.sum(raw_mat,2)
+        # print(torch.max(sqrdists))
+        return density_mat
+
