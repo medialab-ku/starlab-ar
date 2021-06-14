@@ -133,3 +133,28 @@ class kNNRepulsionLoss(nn.Module):
         repulsion = torch.mul(-top_dist_net,weights)
         return repulsion.sum(2).sum(1).mean()
 
+
+class kNNLoss(nn.Module):
+    """
+    Proposed PatchVariance component
+    """
+    def __init__(self, k=10, n_seeds=20):
+        super(kNNLoss,self).__init__()
+        self.k = k
+        self.n_seeds = n_seeds
+    def forward(self, pcs):
+        n_seeds = self.n_seeds
+        k = self.k
+        seeds = farthest_point_sample(pcs,n_seeds) # which gives index
+        seeds_value = torch.stack([pc[seed] for pc, seed in zip(pcs,seeds)]) 
+        pcs_new = pcs.unsqueeze(2).repeat(1,1,n_seeds,1)
+        seeds_new = seeds_value.unsqueeze(1).repeat(1,2048,1,1)
+        dist = pcs_new.add(-seeds_new)
+        dist_value = torch.norm(dist,dim=3)
+        dist_new = dist_value.transpose(1,2)
+        top_dist, idx = torch.topk(dist_new, k+1, dim=2, largest=False)
+        overall_mean = top_dist[:,:,1:].mean()
+        top_dist = top_dist/overall_mean
+        var = torch.var(top_dist.mean(dim=2)).mean()
+        return var
+
