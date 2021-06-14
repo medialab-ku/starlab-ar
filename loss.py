@@ -160,6 +160,7 @@ class kNNLoss(nn.Module):
 
 
 class expansionPenaltyFunction(Function):
+    @staticmethod
     def forward(ctx, xyz, primitive_size, alpha):
         assert(primitive_size <= 512)
         batchsize, n, _ = xyz.size()
@@ -174,6 +175,7 @@ class expansionPenaltyFunction(Function):
         ctx.save_for_backward(xyz, assignment)
         return dist, assignment, mean_mst_length / (n / primitive_size)
 
+    @staticmethod
     def backward(ctx, grad_dist, grad_idx, grad_mml):
         xyz, assignment = ctx.saved_tensors
         grad_dist = grad_dist.contiguous()
