@@ -102,3 +102,34 @@ def query_ball_point(radius, xyz, new_xyz, nsample=500, density_only=True):
         # print(torch.max(sqrdists))
         return density_mat
 
+
+class kNNRepulsionLoss(nn.Module):
+    """
+    adapted PU-Net's uniform loss
+    """
+    def __init__(self, k=10, n_seeds=20, h=0.01):
+        super(kNNRepulsionLoss,self).__init__()
+        self.k = k
+        self.n_seeds = n_seeds
+        self.h = h
+    def forward(self, pcs):
+        tic = time.time()
+        n_seeds = self.n_seeds
+        k = self.k
+        seeds = farthest_point_sample(pcs,n_seeds) # which gives index
+        temp = time.time()
+        seeds_value = torch.stack([pc[seed] for pc, seed in zip(pcs,seeds)]) # grad
+
+        pcs_new = pcs.unsqueeze(2).repeat(1,1,n_seeds,1)
+        seeds_new = seeds_value.unsqueeze(1).repeat(1,2048,1,1)
+        dist = pcs_new.add(-seeds_new)
+        dist_value = torch.norm(dist,dim=3)
+        toc = time.time()
+        dist_new = dist_value.transpose(1,2)
+        tac = time.time()
+        top_dist, idx = torch.topk(dist_new, k+1, dim=2, largest=False)
+        top_dist_net = top_dist[:,:,1:]
+        weights = torch.exp(-torch.pow(top_dist_net,2)*(1/(self.h**2)))
+        repulsion = torch.mul(-top_dist_net,weights)
+        return repulsion.sum(2).sum(1).mean()
+
