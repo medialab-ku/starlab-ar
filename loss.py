@@ -182,3 +182,16 @@ class expansionPenaltyFunction(Function):
         grad_xyz = torch.zeros(xyz.size(), device='cuda').contiguous()
         expansion_penalty.backward(xyz, grad_xyz, grad_dist, assignment)
         return grad_xyz, None, None
+
+
+class expansionPenaltyModule(nn.Module):
+    """
+    MSN's expansion penalty
+    """
+    def __init__(self):
+        super(expansionPenaltyModule, self).__init__()
+
+    def forward(self, input, primitive_size, alpha):
+        return expansionPenaltyFunction.apply(input, primitive_size, alpha)
+
+
