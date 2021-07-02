@@ -195,3 +195,24 @@ class expansionPenaltyModule(nn.Module):
         return expansionPenaltyFunction.apply(input, primitive_size, alpha)
 
 
+class DiscriminatorLoss(object):
+    """
+    feature distance from discriminator
+    """
+    def __init__(self, data_parallel=False):
+        self.l2 = nn.MSELoss()
+        self.data_parallel = data_parallel
+
+    def __call__(self, D, fake_pcd, real_pcd):
+        if self.data_parallel:
+            with torch.no_grad():
+                d, real_feature = nn.parallel.data_parallel(
+                    D, real_pcd.detach())
+            d, fake_feature = nn.parallel.data_parallel(D, fake_pcd)
+        else:
+            with torch.no_grad():
+                d, real_feature = D(real_pcd.detach())
+            d, fake_feature = D(fake_pcd)
+
+        D_penalty = F.l1_loss(fake_feature, real_feature)
+        return D_penalty
