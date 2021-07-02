@@ -216,3 +216,40 @@ class DiscriminatorLoss(object):
 
         D_penalty = F.l1_loss(fake_feature, real_feature)
         return D_penalty
+
+
+class DirectedHausdorff(object):
+    """
+    Hausdorf distance
+    """
+    def __init__(self, reduce_mean=True):
+        # super(DirectedHausdorff,self).__init__()
+        self.reduce_mean = reduce_mean
+    
+    def __call__(self, point_cloud1, point_cloud2):
+        """
+        :param point_cloud1: (B, 3, N)  partial
+        :param point_cloud2: (B, 3, M) output
+        :return: directed hausdorff distance, A -> B
+        """
+        n_pts1 = point_cloud1.shape[2]
+        n_pts2 = point_cloud2.shape[2]
+
+        pc1 = point_cloud1.unsqueeze(3)
+        pc1 = pc1.repeat((1, 1, 1, n_pts2)) # (B, 3, N, M)
+        pc2 = point_cloud2.unsqueeze(2)
+        pc2 = pc2.repeat((1, 1, n_pts1, 1)) # (B, 3, N, M)
+
+        l2_dist = torch.sqrt(torch.sum((pc1 - pc2) ** 2, dim=1)) # (B, N, M)
+
+        shortest_dist, _ = torch.min(l2_dist, dim=2)
+
+        hausdorff_dist, _ = torch.max(shortest_dist, dim=1) # (B, )
+
+        if self.reduce_mean:
+            hausdorff_dist = torch.mean(hausdorff_dist)
+
+        return hausdorff_dist
+
+
+
