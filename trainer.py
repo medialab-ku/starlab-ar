@@ -79,7 +79,49 @@ class Trainer(object):
                 os.makedirs(self.args.GAN_ckpt_path)
 
     def train(self):
-        pass
+        for i, data in enumerate(self.dataloader):
+            tic = time.time()
+            if self.args.dataset in ['MatterPort','ScanNet','KITTI']:
+                # without gt
+                partial, index = data
+                gt = None
+            else:
+                # with gt
+                gt, partial, index = data
+                gt = gt.squeeze(0).cuda()
+                
+                ### simulate pfnet ball-holed data
+                if self.args.inversion_mode == 'simulate_pfnet':
+                    n_removal = 512
+                    choice = [torch.Tensor([1,0,0]),torch.Tensor([0,0,1]),torch.Tensor([1,0,1]),torch.Tensor([-1,0,0]),torch.Tensor([-1,1,0])]
+                    chosen = random.sample(choice,1)
+                    dist = gt.add(-chosen[0].cuda())
+                    dist_val = torch.norm(dist,dim=1)
+                    top_dist, idx = torch.topk(dist_val, k=2048-n_removal)
+                    partial = gt[idx]
+            
+            partial = partial.squeeze(0).cuda()
+            # reset G for each new input
+            self.model.reset_G(pcd_id=index.item())
+
+            # set target and complete shape 
+            # for ['reconstruction', 'jittering', 'morphing'], GT is used for reconstruction
+            # else, GT is not involved for training
+            if partial is None or self.args.inversion_mode in ['reconstruction', 'jittering', 'morphing','ball_hole','knn_hole']:
+                self.model.set_target(gt=gt)
+            else:
+                self.model.set_target(gt=gt, partial=partial)
+            
+            # initialization
+            self.model.select_z(select_y=False)
+            # inversion
+            self.model.run()
+            toc = time.time()
+            if self.rank == 0:
+                print(i ,'out of',len(self.dataloader),'done in ',int(toc-tic),'s')
+                    
+        print('<<<<<<<<<<<<<<<<<<<<<<<<<<<<,rank',self.rank,'completed>>>>>>>>>>>>>>>>>>>>>>')
+
 
 if __name__ == "__main__":
     args = Arguments(stage='inversion').parser().parse_args()
