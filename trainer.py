@@ -27,6 +27,14 @@ from external.ChamferDistancePytorch.chamfer_python import distChamfer, distCham
 
 import random
 
+class Trainer(object):
+
+    def __init__(self, args):
+        pass
+
+    def train(self):
+        pass
+
 if __name__ == "__main__":
     args = Arguments(stage='inversion').parser().parse_args()
     args.device = torch.device('cuda:'+str(args.gpu) if torch.cuda.is_available() else 'cpu')
