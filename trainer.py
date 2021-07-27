@@ -30,7 +30,53 @@ import random
 class Trainer(object):
 
     def __init__(self, args):
-        pass
+        self.args = args
+        
+        if self.args.dist:
+            self.rank = dist.get_rank()
+            self.world_size = dist.get_world_size()
+        else:
+            self.rank, self.world_size = 0, 1
+
+        self.inversion_mode = args.inversion_mode
+        
+        save_inversion_dirname = args.save_inversion_path.split('/')
+        log_pathname = './logs/'+save_inversion_dirname[-1]+'.txt'
+        args.log_pathname = log_pathname
+
+        self.model = ShapeInversion(self.args)
+        if self.inversion_mode == 'morphing':
+            self.model2 = ShapeInversion(self.args)
+            self.model_interp = ShapeInversion(self.args)
+        
+        if self.args.dataset in ['MatterPort','ScanNet','KITTI','PartNet']:
+            dataset = PlyDataset(self.args)
+        else: 
+            dataset = CRNShapeNet(self.args)
+        
+        sampler = DistributedSampler(dataset) if self.args.dist else None
+
+        if self.inversion_mode == 'morphing':
+            self.dataloader = DataLoader(
+                dataset,
+                batch_size=2,
+                shuffle=False,
+                sampler=sampler,
+                num_workers=1,
+                pin_memory=False)
+        else:
+            self.dataloader = DataLoader(
+                dataset,
+                batch_size=1,
+                shuffle=False,
+                sampler=sampler,
+                num_workers=1,
+                pin_memory=False)
+
+        # set generator parameter file path
+        if self.args.GAN_save_every_n_data > 0:
+            if not os.path.exists(self.args.GAN_ckpt_path):
+                os.makedirs(self.args.GAN_ckpt_path)
 
     def train(self):
         pass
