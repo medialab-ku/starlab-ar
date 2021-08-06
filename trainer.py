@@ -119,7 +119,29 @@ class Trainer(object):
             toc = time.time()
             if self.rank == 0:
                 print(i ,'out of',len(self.dataloader),'done in ',int(toc-tic),'s')
-                    
+            
+            if self.args.visualize:
+                pcd_list = self.model.checkpoint_pcd
+                flag_list = self.model.checkpoint_flags
+                output_dir = self.args.save_inversion_path + '_visual'
+                if self.args.inversion_mode == 'jittering':
+                    output_stem = str(index.item())
+                    draw_any_set(flag_list, pcd_list, output_dir, output_stem, layout=(4,10))
+                else:
+                    output_stem = str(index.item())
+                    draw_any_set(flag_list, pcd_list, output_dir, output_stem, layout=(3,4))
+
+            # save generator params as file
+            if self.args.GAN_save_every_n_data > 0 and i % self.args.GAN_save_every_n_data == 0:
+                GAN_ckpt_file_path = os.path.join(self.args.GAN_ckpt_path, self.args.GAN_ckpt_save) + str(i) + '_' +'.pt'
+                torch.save({
+                        'G_state_dict': self.model.G.state_dict(),
+                        'D_state_dict': self.model.D.state_dict(),
+                }, GAN_ckpt_file_path)
+                print('Generator parameter saved at : ' + GAN_ckpt_file_path)
+                
+
+        
         print('<<<<<<<<<<<<<<<<<<<<<<<<<<<<,rank',self.rank,'completed>>>>>>>>>>>>>>>>>>>>>>')
 
 
