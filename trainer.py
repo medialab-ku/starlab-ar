@@ -166,6 +166,65 @@ class Trainer(object):
         
         print('<<<<<<<<<<<<<<<<<<<<<<<<<<<<,rank',self.rank,'completed>>>>>>>>>>>>>>>>>>>>>>')
 
+    def train_morphing(self):
+        """
+        shape interpolation
+        shape pairs are randomly predefined by the dataloader
+        """
+        for i, data in enumerate(self.dataloader):
+            tic = time.time()
+
+            gt, partial, index = data
+            gt = gt.cuda()
+            partial = partial.cuda()
+            # conduct reconstruction of both pcd 
+            self.model.reset_G(pcd_id=index[0].item())
+            self.model.set_target(gt=gt[0])
+            self.model.select_z(select_y=False)
+            self.model.run()
+
+            self.model2.reset_G(pcd_id=index[1].item())
+            self.model2.set_target(gt=gt[1])
+            self.model2.select_z(select_y=False)
+            self.model2.run()
+
+            # do interpolation on both z and G
+            interpolated_pcd = []
+            interpolated_flag = []
+            weight1 = self.model.G.state_dict()
+            weight2 = self.model2.G.state_dict()
+            weight_interp = OrderedDict()
+            with torch.no_grad():
+                for i in range(11):
+                    alpha = i / 10
+                    # interpolate between both latent vector and generator weight
+                    z_interp = alpha * self.model.z + (1 - alpha) * self.model2.z
+                    for k, w1 in weight1.items():
+                        w2 = weight2[k]
+                        weight_interp[k] = alpha * w1 + (1 - alpha) * w2
+                    self.model_interp.G.load_state_dict(weight_interp)
+                    x_interp = self.model_interp.G([z_interp])
+                    interpolated_pcd.append(x_interp)
+                    interpolated_flag.append(str(alpha))
+            
+            if self.args.visualize:
+                pcd_ls = [gt[1]] + interpolated_pcd + [gt[0]]
+                flag_ls = ['gt_1'] + interpolated_flag + ['gt_2']
+                output_dir = self.args.save_inversion_path + '_visual'
+                output_stem = str(index[0].item())+'_'+str(index[1].item())
+                draw_any_set(flag_ls, pcd_ls, output_dir, output_stem, layout=(3,6))
+
+                output_dir2 = self.args.save_inversion_path + '_interpolates'
+                if not os.path.isdir(output_dir2):
+                    os.mkdir(output_dir2)
+                for flag, pcd in zip(flag_ls, pcd_ls):
+                    pcd = pcd.squeeze(0).detach().cpu().numpy()
+                    np.savetxt(os.path.join(output_dir2, output_stem+'_'+flag+'.txt'),pcd,fmt = "%f;%f;%f")
+            
+            if self.rank == 0:
+                toc = time.time()
+                print(i ,'out of',len(self.dataloader),'done in ',int(toc-tic),'s')
+                tic = time.time()          
 
 if __name__ == "__main__":
     args = Arguments(stage='inversion').parser().parse_args()
