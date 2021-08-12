@@ -77,6 +77,28 @@ class Trainer(object):
         if self.args.GAN_save_every_n_data > 0:
             if not os.path.exists(self.args.GAN_ckpt_path):
                 os.makedirs(self.args.GAN_ckpt_path)
+        
+    def run(self):
+        """
+        The framework support the following inversion_mode:
+        - completion: complete given partial shapes in the test set
+        - reconstruction: reconstruct given complete shapes
+        - jittering: change an compelte object into other plausible shapes of different geometries
+        - morphing: interpolate between two given complete shapes
+        - diversity: output multiple valid complete shapes given a single partial shape
+        - ball_hole_diversity: output multiple valid complete shapes, 
+            where the partial shapes is randomly made from complete shapes
+        - simulate_pfnet: complete partial shapes, where partial shapes are randomly 
+            made from complete shapes following PF-Net
+        """
+        if self.inversion_mode in ['reconstruction', 'completion', 'jittering','simulate_pfnet']:
+            self.train()
+        elif self.inversion_mode in ['diversity', 'ball_hole_diversity']: 
+            self.train_diversity()
+        elif self.inversion_mode == 'morphing':
+            self.train_morphing() 
+        else:
+            raise NotImplementedError
 
     def train(self):
         for i, data in enumerate(self.dataloader):
