@@ -166,6 +166,52 @@ class Trainer(object):
         
         print('<<<<<<<<<<<<<<<<<<<<<<<<<<<<,rank',self.rank,'completed>>>>>>>>>>>>>>>>>>>>>>')
 
+    def train_diversity(self):
+        for i, data in enumerate(self.dataloader):
+            tic = time.time()
+            ### get data
+            if self.args.dataset in ['MatterPort','ScanNet','KITTI']:
+                # without gt
+                partial, index = data
+                gt = None
+            else:
+                # with gt
+                gt, partial, index = data
+                gt = gt.squeeze(0).cuda()
+
+            if self.args.inversion_mode == 'ball_hole_diversity':
+                pcd = gt.unsqueeze(0).clone()
+                self.hole_radius = self.args.hole_radius
+                self.hole_n = self.args.hole_n
+                seeds = farthest_point_sample(pcd, self.hole_n) # shape (B,hole_n)
+                self.hole_centers = torch.stack([itm[seed] for itm, seed in zip(pcd,seeds)]) # (B, hole_n, 3)
+                flag_map = torch.ones(1,2048,1).cuda()
+                pcd_new = pcd.unsqueeze(2).repeat(1,1,self.hole_n,1)
+                seeds_new = self.hole_centers.unsqueeze(1).repeat(1,2048,1,1)
+                delta = pcd_new.add(-seeds_new) # (B, 2048, hole_n, 3)
+                dist_mat = torch.norm(delta,dim=3)
+                dist_new = dist_mat.transpose(1,2) # (B, hole_n, 2048)
+                for i in range(self.hole_n):
+                    dist_per_hole = dist_new[:,i,:].unsqueeze(2)
+                    threshold_dist = self.hole_radius
+                    flag_map[dist_per_hole <= threshold_dist] = 0
+                partial = torch.mul(pcd, flag_map).squeeze(0)
+                ### remove zeros
+                norm = torch.norm(partial,dim=1)
+                idx =  torch.where(norm > 0)
+                partial = partial[idx[0]]
+                partial = partial.cuda() 
+                # print(index.item(), 'partial shape', partial.shape)
+            else:
+                partial = partial.squeeze(0).cuda()
+            
+            # reset G for each new input
+            self.model.reset_G(pcd_id=index.item())
+            # set target and complete shape
+            self.model.set_target(gt=gt, partial=partial)
+            # search init values of z
+            self.model.diversity_search()
+
     def train_morphing(self):
         """
         shape interpolation
