@@ -212,6 +212,33 @@ class Trainer(object):
             # search init values of z
             self.model.diversity_search()
 
+            ### fine tuning
+            pcd_ls = [gt.unsqueeze(0), partial.unsqueeze(0)]
+            flag_ls = ['gt', 'input']
+            for ith, z in enumerate(self.model.zs):
+                self.model.reset_G(pcd_id=index.item())
+                self.model.set_target(gt=gt, partial=partial)
+                self.model.z.data = z.data
+                self.model.run(ith=ith)
+                self.model.xs.append(self.model.x)
+                flag_ls.append(str(ith))
+                pcd_ls.append(self.model.x)
+            
+            if self.args.visualize:
+                output_stem = str(index.item())
+                output_dir = self.args.save_inversion_path + '_visual'
+                if self.args.n_outputs <= 10:
+                    layout = (3,4)
+                elif self.args.n_outputs <= 20:
+                    layout = (4,6)
+                else:
+                    layout = (6,9)
+                draw_any_set(flag_ls, pcd_ls, output_dir, output_stem, layout=layout)
+                if self.rank == 0:
+                    toc = time.time()
+                    print(i ,'out of',len(self.dataloader),'done in ',int(toc-tic),'s')
+                    tic = time.time()
+
     def train_morphing(self):
         """
         shape interpolation
