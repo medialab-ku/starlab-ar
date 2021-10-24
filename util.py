@@ -57,6 +57,15 @@ def write_tsdf_mesh(path: str, tsdf: np.ndarray) -> None:
     triangles[:, 1:] = triangles[:, 2:0:-1] # NOTE: reordering
     mcubes.export_obj(vertices, triangles, path)
 
+def read_mesh(path: str) -> o3d.geometry.TriangleMesh:
+    return o3d.io.read_triangle_mesh(path)
+
+def write_mesh(path: str, mesh: o3d.geometry.TriangleMesh) -> None:
+    return o3d.io.write_triangle_mesh(path, mesh)
+
+def show_mesh(mesh: o3d.geometry.TriangleMesh) -> None:
+    o3d.visualization.draw_geometries([mesh], mesh_show_back_face=True)
+
 def convert_mesh2pcd(mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.PointCloud:
     pcd = mesh.sample_points_uniformly   (number_of_points=SAMPLING_UNIFORM)
     pcd = mesh.sample_points_poisson_disk(number_of_points=SAMPLING_POISSON, pcl=pcd)
