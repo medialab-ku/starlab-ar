@@ -2,6 +2,19 @@ import numpy as np
 import cv2
 
 
+"""
+Settings
+"""
+
+SAMPLING_UNIFORM = 2048 * 5
+SAMPLING_POISSON = 2048
+
+CONSTRUCT_ALPHA = 0.2
+
+"""
+Functions
+"""
+
 def show_depth_map(name: str, map: np.ndarray) -> None:
     image = 255 * (map / 4)
     image = image.astype(np.uint8)
