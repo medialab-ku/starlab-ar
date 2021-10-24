@@ -1,7 +1,9 @@
+from typing import Tuple
 import numpy as np
 from numpy import linalg as LA
 import open3d as o3d
 import cv2
+import mcubes
 
 
 """
@@ -63,8 +65,17 @@ def read_mesh(path: str) -> o3d.geometry.TriangleMesh:
 def write_mesh(path: str, mesh: o3d.geometry.TriangleMesh) -> None:
     return o3d.io.write_triangle_mesh(path, mesh)
 
+def read_pcd(path: str) -> o3d.geometry.PointCloud:
+    return o3d.io.read_point_cloud(path)
+
+def write_pcd(path: str, pcd: o3d.geometry.PointCloud) -> None:
+    return o3d.io.write_point_cloud(path, pcd)
+
 def show_mesh(mesh: o3d.geometry.TriangleMesh) -> None:
     o3d.visualization.draw_geometries([mesh], mesh_show_back_face=True)
+
+def show_pcd(pcd: o3d.geometry.PointCloud) -> None:
+    o3d.visualization.draw_geometries([pcd])
 
 def convert_mesh2pcd(mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.PointCloud:
     pcd = mesh.sample_points_uniformly   (number_of_points=SAMPLING_UNIFORM)
