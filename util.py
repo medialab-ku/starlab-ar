@@ -42,7 +42,17 @@ def write_normal_map(path: str, map: np.ndarray) -> None:
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
     cv2.imwrite(path, image)
     cv2.waitKey(1)
-    
+
+def convert_mesh2pcd(mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.PointCloud:
+    pcd = mesh.sample_points_uniformly   (number_of_points=SAMPLING_UNIFORM)
+    pcd = mesh.sample_points_poisson_disk(number_of_points=SAMPLING_POISSON, pcl=pcd)
+    return pcd
+
+def convert_pcd2mesh(pcd, alpha=1):
+    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha * CONSTRUCT_ALPHA)
+    mesh.compute_vertex_normals()
+    return mesh
+
 def convert_pcd2pts(pcd: o3d.geometry.PointCloud) -> np.ndarray:
     return np.asarray(pcd.points, dtype=np.float32)
 
