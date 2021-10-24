@@ -1,4 +1,5 @@
 import numpy as np
+from numpy import linalg as LA
 import cv2
 
 
@@ -40,3 +41,10 @@ def write_normal_map(path: str, map: np.ndarray) -> None:
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
     cv2.imwrite(path, image)
     cv2.waitKey(1)
+
+def normalize_pts(pts: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float]:
+    mean = pts.mean(axis=0)
+    pts_ = pts - mean
+    norm = LA.norm(pts_, axis=1).max() * 2
+    pts_ = pts_ / norm
+    return pts_, mean, norm
