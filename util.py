@@ -43,6 +43,20 @@ def write_normal_map(path: str, map: np.ndarray) -> None:
     cv2.imwrite(path, image)
     cv2.waitKey(1)
 
+def read_tsdf_volume(path: str) -> np.ndarray:
+    with open(path, 'rb') as f:
+        return np.load(f)
+
+def write_tsdf_volume(path: str, tsdf: np.ndarray) -> None:
+    with open(path, 'wb') as f:
+        np.save(f, tsdf)
+
+def write_tsdf_mesh(path: str, tsdf: np.ndarray) -> None:
+    vertices, triangles = mcubes.marching_cubes(tsdf, 0)
+    vertices[:, 0:2] = -vertices[:, 0:2] # NOTE: yz-negation
+    triangles[:, 1:] = triangles[:, 2:0:-1] # NOTE: reordering
+    mcubes.export_obj(vertices, triangles, path)
+
 def convert_mesh2pcd(mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.PointCloud:
     pcd = mesh.sample_points_uniformly   (number_of_points=SAMPLING_UNIFORM)
     pcd = mesh.sample_points_poisson_disk(number_of_points=SAMPLING_POISSON, pcl=pcd)
