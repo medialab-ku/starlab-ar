@@ -1,0 +1,19 @@
+# CLion & PyCharm
+.idea/
+
+# CMake
+build/
+
+# venv
+venv/
+
+# Python cache
+__pycache__/
+
+# Outputs (image, video, mesh)
+image/
+video/
+mesh/
+
+# Zip files
+*.zip
