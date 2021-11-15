@@ -19,6 +19,42 @@ DEPTH_FRAME_RATE = 30
 ALIGN_TO = 'COLOR'  # 'COLOR' or 'DEPTH'
 
 
+############################## Global Process ##############################
+
+
+# create config
+config = rs2.config()
+config.enable_stream(rs2.stream.color,
+                     COLOR_WIDTH, COLOR_HEIGHT, rs2.format.rgb8,
+                     COLOR_FRAME_RATE)
+config.enable_stream(rs2.stream.depth,
+                     DEPTH_WIDTH, DEPTH_HEIGHT, rs2.format.z16,
+                     DEPTH_FRAME_RATE)
+
+# create align
+align_to = rs2.stream.depth
+if ALIGN_TO == 'COLOR':
+    align_to = rs2.stream.color
+if ALIGN_TO == 'DEPTH':
+    align_to = rs2.stream.depth
+align = rs2.align(align_to)
+
+# create pipeline
+pipeline = rs2.pipeline()
+
+# start streaming
+profile = pipeline.start(config)
+
+# get intrinsic parameters
+pipeline_profile = pipeline.get_active_profile()
+stream_profile = pipeline_profile.get_stream(align_to)
+video_stream_profile = stream_profile.as_video_stream_profile()
+intrinsics = video_stream_profile.intrinsics
+
+# stop streaming
+# pipeline.stop()
+
+
 ############################## Function Definition ##############################
 
 
