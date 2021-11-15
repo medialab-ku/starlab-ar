@@ -1,0 +1,8 @@
+# Build
+build/
+
+# Mesh
+*.obj
+
+# NumPy
+*.npy
