@@ -89,6 +89,38 @@ def get_frame_normal_map(size: tuple, frame_id: int) -> np.ndarray:
     return kf_get_frame_normal_map(frame_id)
 
 
+def get_object_tsdf_volume(size: tuple, object_id: int) -> np.ndarray:
+    kf_get_object_tsdf_volume = kf.get_object_tsdf_volume
+    kf_get_object_tsdf_volume.argtypes = [ctypes.c_int]
+    kf_get_object_tsdf_volume.restype = np.ctypeslib.ndpointer(
+        dtype=ctypes.c_float, shape=(size[2], size[1], size[0]))
+    return kf_get_object_tsdf_volume(object_id)
+
+
+def get_object_weight_volume(size: tuple, object_id: int) -> np.ndarray:
+    kf_get_object_weight_volume = kf.get_object_weight_volume
+    kf_get_object_weight_volume.argtypes = [ctypes.c_int]
+    kf_get_object_weight_volume.restype = np.ctypeslib.ndpointer(
+        dtype=ctypes.c_float, shape=(size[2], size[1], size[0]))
+    return kf_get_object_weight_volume(object_id)
+
+
+def get_object_binomial_volume(size: tuple, object_id: int) -> np.ndarray:
+    kf_get_object_binomial_volume = kf.get_object_binomial_volume
+    kf_get_object_binomial_volume.argtypes = [ctypes.c_int]
+    kf_get_object_binomial_volume.restype = np.ctypeslib.ndpointer(
+        dtype=ctypes.c_float, shape=(size[2], size[1], size[0]))
+    return kf_get_object_binomial_volume(object_id)
+
+
+def get_object_polygon_volume(size: tuple, object_id: int) -> np.ndarray:
+    kf_get_object_polygon_volume = kf.get_object_polygon_volume
+    kf_get_object_polygon_volume.argtypes = [ctypes.c_int]
+    kf_get_object_polygon_volume.restype = np.ctypeslib.ndpointer(
+        dtype=ctypes.c_float, shape=(size[2], size[1], size[0], 5, 3, 3))
+    return kf_get_object_polygon_volume(object_id)
+
+
 def get_camera_depth_map(size: tuple, camera_id: int) -> np.ndarray:
     kf_get_camera_depth_map = kf.get_camera_depth_map
     kf_get_camera_depth_map.argtypes = [ctypes.c_int]
