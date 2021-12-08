@@ -27,10 +27,26 @@ def create_frame(size: tuple, level: int, intrinsic: tuple) -> int:
                            intrinsic[0], intrinsic[1], intrinsic[2], intrinsic[3])
 
 
+def create_object(size: tuple, center: tuple, voxel_size: float) -> int:
+    kf_create_object = kf.create_object
+    kf_create_object.argtypes = [
+        ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+    kf_create_object.restype = ctypes.c_int
+    return kf_create_object(size[0], size[1], size[2],
+                            center[0], center[1], center[2], voxel_size)
+
+
 def delete_frame(id: int) -> None:
     kf_delete_frame = kf.delete_frame
     kf_delete_frame.argtypes = [ctypes.c_int]
     kf_delete_frame(id)
+
+
+def delete_object(id: int) -> None:
+    kf_delete_object = kf.delete_object
+    kf_delete_object.argtypes = [ctypes.c_int]
+    kf_delete_object(id)
 
 
 ############################## Class Definition ##############################
