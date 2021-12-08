@@ -9,6 +9,30 @@ import numpy as np
 kf = ctypes.CDLL(os.path.dirname(__file__) + '/build/libkf.so')
 
 
+############################## Function Definition ##############################
+
+
+def hello_world() -> None:
+    kf_hello_world = kf.hello_world
+    kf_hello_world()
+
+
+def create_frame(size: tuple, level: int, intrinsic: tuple) -> int:
+    kf_create_frame = kf.create_frame
+    kf_create_frame.argtypes = [
+        ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+    kf_create_frame.restype = ctypes.c_int
+    return kf_create_frame(size[0], size[1], level,
+                           intrinsic[0], intrinsic[1], intrinsic[2], intrinsic[3])
+
+
+def delete_frame(id: int) -> None:
+    kf_delete_frame = kf.delete_frame
+    kf_delete_frame.argtypes = [ctypes.c_int]
+    kf_delete_frame(id)
+
+
 ############################## Class Definition ##############################
 
 
