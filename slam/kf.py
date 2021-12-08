@@ -37,6 +37,16 @@ def create_object(size: tuple, center: tuple, voxel_size: float) -> int:
                             center[0], center[1], center[2], voxel_size)
 
 
+def create_camera(size: tuple, intrinsic: tuple) -> int:
+    kf_create_camera = kf.create_camera
+    kf_create_camera.argtypes = [
+        ctypes.c_int, ctypes.c_int,
+        ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+    kf_create_camera.restype = ctypes.c_int
+    return kf_create_camera(size[0], size[1],
+                            intrinsic[0], intrinsic[1], intrinsic[2], intrinsic[3])
+
+
 def delete_frame(id: int) -> None:
     kf_delete_frame = kf.delete_frame
     kf_delete_frame.argtypes = [ctypes.c_int]
@@ -47,6 +57,12 @@ def delete_object(id: int) -> None:
     kf_delete_object = kf.delete_object
     kf_delete_object.argtypes = [ctypes.c_int]
     kf_delete_object(id)
+
+
+def delete_camera(id: int) -> None:
+    kf_delete_camera = kf.delete_camera
+    kf_delete_camera.argtypes = [ctypes.c_int]
+    kf_delete_camera(id)
 
 
 ############################## Class Definition ##############################
