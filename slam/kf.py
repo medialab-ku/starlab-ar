@@ -65,6 +65,30 @@ def delete_camera(id: int) -> None:
     kf_delete_camera(id)
 
 
+def get_frame_depth_map(size: tuple, frame_id: int) -> np.ndarray:
+    kf_get_frame_depth_map = kf.get_frame_depth_map
+    kf_get_frame_depth_map.argtypes = [ctypes.c_int]
+    kf_get_frame_depth_map.restype = np.ctypeslib.ndpointer(
+        dtype=ctypes.c_float, shape=(size[1], size[0]))
+    return kf_get_frame_depth_map(frame_id)
+
+
+def get_frame_vertex_map(size: tuple, frame_id: int) -> np.ndarray:
+    kf_get_frame_vertex_map = kf.get_frame_vertex_map
+    kf_get_frame_vertex_map.argtypes = [ctypes.c_int]
+    kf_get_frame_vertex_map.restype = np.ctypeslib.ndpointer(
+        dtype=ctypes.c_float, shape=(size[1], size[0], 3))
+    return kf_get_frame_vertex_map(frame_id)
+
+
+def get_frame_normal_map(size: tuple, frame_id: int) -> np.ndarray:
+    kf_get_frame_normal_map = kf.get_frame_normal_map
+    kf_get_frame_normal_map.argtypes = [ctypes.c_int]
+    kf_get_frame_normal_map.restype = np.ctypeslib.ndpointer(
+        dtype=ctypes.c_float, shape=(size[1], size[0], 3))
+    return kf_get_frame_normal_map(frame_id)
+
+
 def get_camera_depth_map(size: tuple, camera_id: int) -> np.ndarray:
     kf_get_camera_depth_map = kf.get_camera_depth_map
     kf_get_camera_depth_map.argtypes = [ctypes.c_int]
