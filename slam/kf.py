@@ -65,6 +65,21 @@ def delete_camera(id: int) -> None:
     kf_delete_camera(id)
 
 
+def get_camera_pose(camera_id: int) -> np.ndarray:
+    kf_get_camera_pose = kf.get_camera_pose
+    kf_get_camera_pose.argtypes = [ctypes.c_int]
+    kf_get_camera_pose.restype = np.ctypeslib.ndpointer(
+        dtype=ctypes.c_float, shape=(4, 4))
+    return np.transpose(kf_get_camera_pose(camera_id))
+
+
+def get_camera_track_error(camera_id: int) -> float:
+    kf_get_camera_track_error = kf.get_camera_track_error
+    kf_get_camera_track_error.argtypes = [ctypes.c_int]
+    kf_get_camera_track_error.restype = ctypes.c_float
+    return kf_get_camera_track_error(camera_id)
+
+
 ############################## Class Definition ##############################
 
 
