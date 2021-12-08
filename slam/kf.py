@@ -56,3 +56,45 @@ class Frame:
 
     def get_normal_map(self) -> np.ndarray:
         return get_frame_normal_map(self._size, self._id)
+
+class Object:
+
+    def __init__(self, size: tuple, center: tuple, voxel_size: float):
+        self._id = create_object(size, center, voxel_size)
+        self._size = size
+        self._center = center
+        self._voxel_size = voxel_size
+
+    def __del__(self):
+        delete_object(self._id)
+
+    @property
+    def id(self) -> int:
+        return self._id
+
+    @property
+    def size(self) -> tuple:
+        return self._size
+
+    @property
+    def center(self) -> tuple:
+        return self._center
+
+    @property
+    def voxel_size(self) -> float:
+        return self._voxel_size
+
+    def integrate(self, frame: Frame) -> None:
+        object_integrate_frame(self._id, frame.id)
+
+    def get_tsdf_volume(self) -> np.ndarray:
+        return get_object_tsdf_volume(self._size, self._id)
+
+    def get_weight_volume(self) -> np.ndarray:
+        return get_object_weight_volume(self._size, self._id)
+
+    def get_binomial_volume(self) -> np.ndarray:
+        return get_object_binomial_volume(self._size, self._id)
+
+    def get_polygon_volume(self) -> np.ndarray:
+        return get_object_polygon_volume(self._size, self._id)
