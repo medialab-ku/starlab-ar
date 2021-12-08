@@ -98,3 +98,51 @@ class Object:
 
     def get_polygon_volume(self) -> np.ndarray:
         return get_object_polygon_volume(self._size, self._id)
+
+class Camera:
+    def __init__(self, size: tuple, intrinsic: tuple):
+        self._id = create_camera(size, intrinsic)
+        self._size = size
+        self._intrinsic = intrinsic
+
+    def __del__(self):
+        delete_camera(self._id)
+
+    @property
+    def id(self) -> int:
+        return self._id
+
+    @property
+    def size(self) -> tuple:
+        return self._size
+
+    @property
+    def intrinsic(self) -> tuple:
+        return self._intrinsic
+
+    def raycast(self, object: Object) -> None:
+        camera_raycast_object(self._id, object.id)
+
+    def track(self, frame: Frame) -> None:
+        camera_track_frame(self._id, frame.id)
+
+    def clear(self) -> None:
+        camera_clear(self._id)
+
+    def get_depth_map(self) -> np.ndarray:
+        return get_camera_depth_map(self._size, self._id)
+
+    def get_vertex_map(self) -> np.ndarray:
+        return get_camera_vertex_map(self._size, self._id)
+
+    def get_normal_map(self) -> np.ndarray:
+        return get_camera_normal_map(self._size, self._id)
+
+    def get_instance_map(self) -> np.ndarray:
+        return get_camera_instance_map(self._size, self._id)
+
+    def get_pose(self) -> np.ndarray:
+        return get_camera_pose(self._id)
+
+    def get_track_error(self) -> float:
+        return get_camera_track_error(self._id)
