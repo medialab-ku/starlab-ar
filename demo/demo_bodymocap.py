@@ -32,7 +32,7 @@ canvas = window.get_canvas()
 canvas.set_background_color((1, 1, 1))
 scene = ti.ui.Scene()
 camera = ti.ui.Camera()
-camera.position(5.0, 5.0, 0.0)
+camera.position(0.0, -1.0, -5.0)
 camera.fov(30)
 camera.up(0, -1, 0)
 
@@ -107,7 +107,7 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
             break   
         print("--------------------------------------")
         print("Frame: ", cur_frame)
-        
+
         if load_bbox:
             body_pose_list = None
         else:
@@ -141,18 +141,17 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         pred_mesh_list = demo_utils.extract_mesh_from_output(pred_output_list)
         '''
         
-        # faces_ti = ti.Vector.field(3, dtype=ti.i32, shape=faces_torch.shape[0])
         verts_ti.from_torch(verts_torch)
         if is_first_frame:
             faces_ti.from_numpy(faces_np.reshape(-1))
 
         # Render
         camera.track_user_inputs(window, movement_speed=0.05, hold_key=ti.ui.RMB)
-        camera.lookat(0.5, 0.5, 0.5)
+        camera.lookat(0.0, 0.0, 0.0)
         scene.set_camera(camera)
         scene.ambient_light((0.5, 0.5, 0.5))
-        scene.point_light(pos=(0.5, 1.5, 0.5), color=(0.3, 0.3, 0.3))
-        scene.point_light(pos=(0.5, 1.5, 1.5), color=(0.3, 0.3, 0.3))
+        scene.point_light(pos=(-0.5, -3.0, -3.0), color=(0.3, 0.3, 0.3))
+        scene.point_light(pos=(0.5, -3.0, -3.0), color=(0.3, 0.3, 0.3))
         # scene.particles(verts_ti, radius=0.01, color=(0.5, 0.5, 0.5))
         scene.mesh(vertices=verts_ti, indices=faces_ti, color=(0.5, 0.5, 0.5))
         canvas.scene(scene)

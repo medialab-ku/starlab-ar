@@ -143,7 +143,7 @@ class BodyMocap(object):
                 hmr_output = self.model_regressor(norm_img.to(self.device), bbox_center=bbox_center, bbox_scale=bbox_scale, img_w=img_w, img_h=img_h)
                 pred_rotmat, pred_betas, pred_camera = hmr_output['pred_pose'], hmr_output['pred_shape'], hmr_output['pred_cam']
                 pred_rotmat = torch.cat((pred_rotmat, self.left_hand_pose.repeat(1, 2, 1, 1)), dim=1)
-                if self.count == 150:
+                if self.count == 20:
                     self.cam = hmr_output['pred_cam']
                     # self.cam = pred_camera
                     self.bboxTopLeft = bboxTopLeft
