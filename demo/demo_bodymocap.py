@@ -5,6 +5,8 @@ import sys
 import os.path as osp
 import torch
 from torchvision.transforms import Normalize
+import taichi as ti
+import meshtaichi_patcher as patcher
 import numpy as np
 import cv2
 import argparse
@@ -23,12 +25,27 @@ from mocap_utils.timer import Timer
 import renderer.image_utils as imu
 from renderer.viewer2D import ImShow
 
+ti.init(kernel_profiler=True, arch=ti.cuda, device_memory_GB=8)
+
+window = ti.ui.Window("Display Mesh", (1024, 1024), vsync=True)
+canvas = window.get_canvas()
+canvas.set_background_color((1, 1, 1))
+scene = ti.ui.Scene()
+camera = ti.ui.Camera()
+camera.position(5.0, 5.0, 0.0)
+camera.fov(30)
+camera.up(0, -1, 0)
+
+verts_ti = ti.Vector.field(3, dtype=ti.f32, shape=10475)
+faces_ti = ti.field(dtype=ti.i32, shape=(20908 * 3,))
+
 def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
     #Setup input data to handle different types of inputs
     input_type, input_data = demo_utils.setup_input(args)
     cur_frame = args.start_frame
     video_frame = 0
     timer = Timer()
+    t_timer = Timer()
     while True:
         timer.tic()
         # load data
@@ -81,11 +98,16 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         else:
             assert False, "Unknown input_type"
 
+        is_first_frame = False
+        if cur_frame is args.start_frame:
+            is_first_frame = True
+
         cur_frame +=1
         if img_original_bgr is None or cur_frame > args.end_frame:
             break   
         print("--------------------------------------")
-
+        print("Frame: ", cur_frame)
+        
         if load_bbox:
             body_pose_list = None
         else:
@@ -110,34 +132,57 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
             body_bbox_list = [body_bbox_list[0], ]       
 
         # Body Pose Regression
-        pred_output_list, img_h, img_w = body_mocap.regress(img_original_bgr, body_bbox_list)
+        verts_torch, faces_np, img_h, img_w = body_mocap.regress(img_original_bgr, body_bbox_list)
+        '''
         # assert len(body_bbox_list) == len(pred_output_list)
         # cv2.imwrite(args.out_dir + '/test' + str(video_frame) + '.png' ,pred_output_list[0]['img_cropped'])
 
         # extract mesh for rendering (vertices in image space and faces) from pred_output_list
         pred_mesh_list = demo_utils.extract_mesh_from_output(pred_output_list)
+        '''
+        
+        # faces_ti = ti.Vector.field(3, dtype=ti.i32, shape=faces_torch.shape[0])
+        verts_ti.from_torch(verts_torch)
+        if is_first_frame:
+            faces_ti.from_numpy(faces_np.reshape(-1))
 
+        # Render
+        camera.track_user_inputs(window, movement_speed=0.05, hold_key=ti.ui.RMB)
+        camera.lookat(0.5, 0.5, 0.5)
+        scene.set_camera(camera)
+        scene.ambient_light((0.5, 0.5, 0.5))
+        scene.point_light(pos=(0.5, 1.5, 0.5), color=(0.3, 0.3, 0.3))
+        scene.point_light(pos=(0.5, 1.5, 1.5), color=(0.3, 0.3, 0.3))
+        # scene.particles(verts_ti, radius=0.01, color=(0.5, 0.5, 0.5))
+        scene.mesh(vertices=verts_ti, indices=faces_ti, color=(0.5, 0.5, 0.5))
+        canvas.scene(scene)
+        window.show()
+
+        '''
         # visualization
-        # res_img = visualizer.visualize(
-        #     img_original_bgr,
-        #     pred_mesh_list = pred_mesh_list, 
-        #     body_bbox_list = body_bbox_list)
+        if visualizer is not None:
+            res_img = visualizer.visualize(
+                img_original_bgr,
+                pred_mesh_list = pred_mesh_list, 
+                body_bbox_list = body_bbox_list)
 
         
-        # show result in the screen
-        if not args.no_display:
-            res_img = res_img.astype(np.uint8)
-            ImShow(res_img)
+            # show result in the screen
+            if not args.no_display:
+                res_img = res_img.astype(np.uint8)
+                ImShow(res_img)
 
-        # save result image
-        # if args.out_dir is not None and args.save_frame:
-        #     demo_utils.save_res_img(args.out_dir, image_path, res_img)
+            # save result image
+            # if args.out_dir is not None and args.save_frame:
+            #     demo_utils.save_res_img(args.out_dir, image_path, res_img)
 
-        # save predictions to pkl
-        if args.save_pred_pkl:
-            demo_type = 'body'
-            demo_utils.save_pred_to_pkl(
-                args, demo_type, image_path, body_bbox_list, hand_bbox_list, pred_output_list)
+            # save predictions to pkl
+
+        # if args.save_pred_pkl:
+        #     demo_type = 'body'
+        #     demo_utils.save_pred_to_pkl(
+        #         args, demo_type, image_path, body_bbox_list, hand_bbox_list, pred_output_list)
+        '''
 
         timer.toc(bPrint=True,title="Time")
         print(f"Processed : {image_path}")
@@ -177,13 +222,17 @@ def main():
     print("use_smplx", use_smplx)
     body_mocap = BodyMocap(checkpoint_path, args.smpl_dir, device, use_smplx, poserbert, posebert_seq_len)
 
+
     # Set Visualizer
     print('Renderer type:', args.renderer_type)
     if args.renderer_type in ['pytorch3d', 'opendr']:
         from renderer.screen_free_visualizer import Visualizer
+    elif args.renderer_type == 'taichi':
+        from renderer.taichi_visualizer import Visualizer
     else:
         from renderer.visualizer import Visualizer
     visualizer = Visualizer(args.renderer_type)
+
 
     run_body_mocap(args, body_bbox_detector, body_mocap, visualizer)
 

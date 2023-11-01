@@ -7,8 +7,6 @@ import numpy as np
 import pickle 
 from torchvision.transforms import Normalize
 import time 
-import taichi as ti
-import meshtaichi_patcher as patcher
 
 from bodymocap.models.head.smplx_cam_head import SMPLXCamHead
 from bodymocap.models import hmr, SMPL, SMPLX, HMR, OneEuroFilter
@@ -145,11 +143,11 @@ class BodyMocap(object):
                 hmr_output = self.model_regressor(norm_img.to(self.device), bbox_center=bbox_center, bbox_scale=bbox_scale, img_w=img_w, img_h=img_h)
                 pred_rotmat, pred_betas, pred_camera = hmr_output['pred_pose'], hmr_output['pred_shape'], hmr_output['pred_cam']
                 pred_rotmat = torch.cat((pred_rotmat, self.left_hand_pose.repeat(1, 2, 1, 1)), dim=1)
-                if self.count == 20:
-                    # self.cam = hmr_output['pred_cam']
-                    # # self.cam = pred_camera
-                    # self.bboxTopLeft = bboxTopLeft
-                    # self.boxScale_o2n = boxScale_o2n
+                if self.count == 150:
+                    self.cam = hmr_output['pred_cam']
+                    # self.cam = pred_camera
+                    self.bboxTopLeft = bboxTopLeft
+                    self.boxScale_o2n = boxScale_o2n
                     self.shape = pred_betas
                 if self.posebert is not None:
                     self.queue_pose.pop(0)
@@ -158,10 +156,10 @@ class BodyMocap(object):
                     rot_seq = self.posebert(rotmat=rot_seq.unsqueeze(0))
                     pred_rotmat = rot_seq[0][-1].unsqueeze(0)
                 if self.cam is not None:
-                    # hmr_output['pred_cam'] = self.cam
-                    # # pred_camera = self.cam
-                    # bboxTopLeft = self.bboxTopLeft
-                    # boxScale_o2n = self.boxScale_o2n
+                    hmr_output['pred_cam'] = self.cam
+                    # pred_camera = self.cam
+                    bboxTopLeft = self.bboxTopLeft
+                    boxScale_o2n = self.boxScale_o2n
                     pred_betas = self.shape
 
 
@@ -185,10 +183,12 @@ class BodyMocap(object):
                 #     pose2rot=True)
 
                 # pred_vertices = smpl_output.vertices
-                pred_vertices = smpl_output['vertices']
-                pred_joints_3d = smpl_output.joints
+                pred_vertices = smpl_output['vertices'].reshape(-1, 3)
+                # pred_joints_3d = smpl_output.joints
 
+                '''
                 pred_vertices = pred_vertices[0].cpu().numpy()
+
                 # t = time.time()
                 # hmr_output['pred_cam'][0, 0] = self.filter_3d[0](hmr_output['pred_cam'][0, 0], t)
                 # hmr_output['pred_cam'][0, 1] = self.filter_3d[1](hmr_output['pred_cam'][0, 1], t)
@@ -203,6 +203,7 @@ class BodyMocap(object):
                 # # Convert mesh to original image space (X,Y are aligned to image)
                 # # 1. SMPL -> 2D bbox
                 # # 2. 2D bbox -> original 2D image
+
                 pred_vertices_bbox = convert_smpl_to_bbox(pred_vertices, camScale, camTrans)
                 pred_vertices_img = convert_bbox_to_oriIm(
                     pred_vertices_bbox, boxScale_o2n, bboxTopLeft, img_original.shape[1], img_original.shape[0])
@@ -213,13 +214,16 @@ class BodyMocap(object):
                 # pred_joints_vis_bbox = convert_smpl_to_bbox(pred_joints_vis, camScale, camTrans) 
                 # pred_joints_vis_img = convert_bbox_to_oriIm(
                 #     pred_joints_vis_bbox, boxScale_o2n, bboxTopLeft, img_original.shape[1], img_original.shape[0]) 
-
+                
                 # # Output
                 pred_output['img_cropped'] = img[:, :, ::-1]
                 pred_output['pred_vertices_img'] = pred_vertices_img # SMPL vertex in image space
                 # pred_output['pred_joints_img'] = pred_joints_vis_img # SMPL joints in image space
                 # pred_output['faces'] = self.smpl.faces
+                
                 pred_output['faces'] = self.smplx_cam_head.smplx.faces
+                '''
+                pred_faces = self.smplx_cam_head.smplx.faces
             
                 # if self.use_smplx:
                 #     img_center = np.array((img_original.shape[1], img_original.shape[0]) ) * 0.5
@@ -236,9 +240,9 @@ class BodyMocap(object):
                 #         pred_joints_bbox, boxScale_o2n, bboxTopLeft, img_original.shape[1], img_original.shape[0])
                 #     pred_output['left_hand_joints_img_coord'] = pred_joints_img
                 
-                pred_output_list.append(pred_output)
+                # pred_output_list.append(pred_output)
 
-        return pred_output_list, img_h, img_w
+        return pred_vertices, pred_faces, img_h, img_w
     
 
     def get_hand_bboxes(self, pred_body_list, img_shape):
