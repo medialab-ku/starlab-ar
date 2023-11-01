@@ -21,7 +21,7 @@ _glut_window = None
 
 class meshRenderer(glRenderer):
 
-    def __init__(self, width=1600, height=1200, name='GL Renderer',
+    def __init__(self, width=640, height=480, name='GL Renderer',
                 #  program_files=['renderer/shaders/simple140.fs', 'renderer/shaders/simple140.vs'],
                 #  program_files=['renderer/shaders/normal140.fs', 'renderer/shaders/normal140.vs'],
                 # program_files=['renderer/shaders/geo140.fs', 'renderer/shaders/geo140.vs'],

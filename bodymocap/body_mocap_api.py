@@ -7,6 +7,8 @@ import numpy as np
 import pickle 
 from torchvision.transforms import Normalize
 import time 
+import taichi as ti
+import meshtaichi_patcher as patcher
 
 from bodymocap.models.head.smplx_cam_head import SMPLXCamHead
 from bodymocap.models import hmr, SMPL, SMPLX, HMR, OneEuroFilter
@@ -184,7 +186,7 @@ class BodyMocap(object):
 
                 # pred_vertices = smpl_output.vertices
                 pred_vertices = smpl_output['vertices']
-                # pred_joints_3d = smpl_output.joints
+                pred_joints_3d = smpl_output.joints
 
                 pred_vertices = pred_vertices[0].cpu().numpy()
                 # t = time.time()

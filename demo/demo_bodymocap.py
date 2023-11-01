@@ -12,7 +12,7 @@ import json
 import pickle
 from datetime import datetime
 
-from demo.demo_options import DemoOptions
+from demo_options import DemoOptions
 from bodymocap.body_mocap_api import BodyMocap
 from bodymocap.body_bbox_detector import BodyPoseEstimator
 from bodymocap.posebert import PoseBERT
@@ -118,10 +118,10 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         pred_mesh_list = demo_utils.extract_mesh_from_output(pred_output_list)
 
         # visualization
-        res_img = visualizer.visualize(
-            img_original_bgr,
-            pred_mesh_list = pred_mesh_list, 
-            body_bbox_list = body_bbox_list)
+        # res_img = visualizer.visualize(
+        #     img_original_bgr,
+        #     pred_mesh_list = pred_mesh_list, 
+        #     body_bbox_list = body_bbox_list)
 
         
         # show result in the screen
@@ -130,8 +130,8 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
             ImShow(res_img)
 
         # save result image
-        if args.out_dir is not None:
-            demo_utils.save_res_img(args.out_dir, image_path, res_img)
+        # if args.out_dir is not None and args.save_frame:
+        #     demo_utils.save_res_img(args.out_dir, image_path, res_img)
 
         # save predictions to pkl
         if args.save_pred_pkl:
@@ -143,8 +143,8 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         print(f"Processed : {image_path}")
 
     #save images as a video
-    if not args.no_video_out and input_type in ['video', 'webcam']:
-        demo_utils.gen_video_out(args.out_dir, args.seq_name)
+    # if not args.no_video_out and input_type in ['video', 'webcam']:
+    #     demo_utils.gen_video_out(args.out_dir, args.seq_name)
 
     if input_type =='webcam' and input_data is not None:
         input_data.release()
@@ -178,6 +178,7 @@ def main():
     body_mocap = BodyMocap(checkpoint_path, args.smpl_dir, device, use_smplx, poserbert, posebert_seq_len)
 
     # Set Visualizer
+    print('Renderer type:', args.renderer_type)
     if args.renderer_type in ['pytorch3d', 'opendr']:
         from renderer.screen_free_visualizer import Visualizer
     else:

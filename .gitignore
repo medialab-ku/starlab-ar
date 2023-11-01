@@ -7,4 +7,6 @@ extra_data/
 mocap_output/
 sample_data/
 frankmocap/
+detectors/
 *.mp4
+*.pyc

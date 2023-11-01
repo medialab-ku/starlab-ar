@@ -4,8 +4,9 @@ from typing import List, Union
 from flatten_dict import flatten, unflatten
 
 
+extra_data_folder = '/home/svvj/workspace/frankmocap/extra_data/'
 SMPL_MODEL_DIR = 'data/body_models/SMPL_python_v.1.1.0/smpl/models'
-SMPLX_MODEL_DIR = '/media/sonnguyen/DATA2/WORK/frankmocap/extra_data/smplx'
+SMPLX_MODEL_DIR = extra_data_folder + 'smplx'
 MANO_MODEL_DIR = 'data/body_models/mano/mano_v1_2/models/'
 
 JOINT_REGRESSOR_TRAIN_EXTRA = 'data/utils/J_regressor_extra.npy'

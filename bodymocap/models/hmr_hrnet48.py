@@ -15,12 +15,13 @@ from .head.smplx_head import SMPLXHead
 from .head.smpl_cam_head import SMPLCamHead
 from ..core.config import PRETRAINED_CKPT_FOLDER
 
+extra_data_folder = '/home/svvj/workspace/frankmocap/extra_data/'
 PRETRAINED_CKPT_FOLDER = {
-    'hrnet_w32-coco': '/media/sonnguyen/DATA2/WORK/frankmocap/extra_data/body_module/pretrained_weights/hrnet/pose_hrnet_w32_256x192.pth',
-    'hrnet_w32-imagenet': '/media/sonnguyen/DATA2/WORK/frankmocap/extra_data/body_module/pretrained_weights/hrnet/hrnetv2_w32_imagenet_pretrained.pth',
+    'hrnet_w32-coco': extra_data_folder + 'body_module/pretrained_weights/hrnet/pose_hrnet_w32_256x192.pth',
+    'hrnet_w32-imagenet': extra_data_folder + 'body_module/pretrained_weights/hrnet/hrnetv2_w32_imagenet_pretrained.pth',
     'hrnet_w32-scratch': '',
-    'hrnet_w48-coco': '/media/sonnguyen/DATA2/WORK/frankmocap/extra_data/body_module/pretrained_weights/hrnet/pose_hrnet_w48_256x192.pth',
-    'hrnet_w48-imagenet': '/media/sonnguyen/DATA2/WORK/frankmocap/extra_data/body_module/pretrained_weights/hrnet/hrnetv2_w48_imagenet_pretrained.pth',
+    'hrnet_w48-coco': extra_data_folder + 'body_module/pretrained_weights/hrnet/pose_hrnet_w48_256x192.pth',
+    'hrnet_w48-imagenet': extra_data_folder + 'body_module/pretrained_weights/hrnet/hrnetv2_w48_imagenet_pretrained.pth',
     'hrnet_w48-scratch': '',
     'resnet50-coco': 'data/ckpt/pretrained/pose_resnet50_256x192.pth',
     'resnet50-scratch': '',

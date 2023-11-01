@@ -195,6 +195,7 @@ class Visualizer(object):
 
         else:
             img_original_resized = img_original
+        print("img_original_resized.shape", img_original_resized.shape)
 
         self.renderer.setWindowSize(img_original_resized.shape[1], img_original_resized.shape[0])
         self.renderer.setBackgroundTexture(img_original_resized)

@@ -26,16 +26,21 @@ virtualenv romp --system-site-packages
 source frankmocap/bin/activate
 ```
 
-**Step 5**: Execute the model
+**Step 5**: Install modules required for each model
+Each required module is listed below.
+
+Also, you have to install other third-party libraries + download pretrained models and sample data.
+    
+```bash
+sh scripts/install_frankmocap.sh
+```
+
+**Step 6**: Execute the model
 ```bash
 python -m demo.demo_bodymocap --input_path webcam  --out_dir ./mocap_output  --single_person --no_display
 ```
+Command line options:
 
-In this step, you should install many modules that are currently missing to run model successfully because this virtual environment is currently empty.
-
-To solve the problems, you need to find the modules through pip and install them one by one. The modules required for each model are listed below.
-
-```
 - input_path
     - webcam
     - video
@@ -43,11 +48,11 @@ To solve the problems, you need to find the modules through pip and install them
     - ./mocap_output
 - single_person
 - no_display
-```
+
 
 ## Modules required for each model
 
 ### frankmocap
 ```bash
-python -m pip install torch torchvision torchaudio opencv-python torchgeometry smplx loguru yacs timm flatten-dict pytorch-lightning scipy pose3d 
+python -m pip install torch torchvision torchaudio opencv-python torchgeometry smplx loguru yacs timm flatten-dict pytorch-lightning scipy pose3d roma einops
 ```
