@@ -36,6 +36,11 @@ camera.position(0.0, -1.0, -5.0)
 camera.fov(30)
 camera.up(0, -1, 0)
 
+pixels = ti.field(dtype=ti.u8, shape=(1024, 1024, 3))
+
+result_dir = "./taichi_output"
+video_manager = ti.tools.VideoManager(output_dir=result_dir, framerate=24, automatic_build=False)
+
 verts_ti = ti.Vector.field(3, dtype=ti.f32, shape=10475)
 faces_ti = ti.field(dtype=ti.i32, shape=(20908 * 3,))
 
@@ -147,7 +152,7 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
 
         # Render
         camera.track_user_inputs(window, movement_speed=0.05, hold_key=ti.ui.RMB)
-        camera.lookat(0.0, 0.0, 0.0)
+        camera.lookat(0.0, -1.0, 0.0)
         scene.set_camera(camera)
         scene.ambient_light((0.5, 0.5, 0.5))
         scene.point_light(pos=(-0.5, -3.0, -3.0), color=(0.3, 0.3, 0.3))
