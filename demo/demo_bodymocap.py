@@ -12,6 +12,7 @@ import cv2
 import argparse
 import json
 import pickle
+import cyobj.io as mio
 from datetime import datetime
 
 from demo_options import DemoOptions
@@ -22,24 +23,45 @@ import mocap_utils.demo_utils as demo_utils
 import mocap_utils.general_utils as gnu
 from mocap_utils.timer import Timer
 
+from physics.mesh import Mesh, applyTransform, makeBox
+from physics.solver import Solver
+
 import renderer.image_utils as imu
 from renderer.viewer2D import ImShow
 
 ti.init(kernel_profiler=True, arch=ti.cuda, device_memory_GB=8)
 
-window = ti.ui.Window("Display Mesh", (1024, 1024), vsync=True)
+window = ti.ui.Window("Display Mesh", (640, 480), vsync=True)
 canvas = window.get_canvas()
 canvas.set_background_color((1, 1, 1))
 scene = ti.ui.Scene()
 camera = ti.ui.Camera()
-camera.position(0.0, -1.0, -5.0)
+camera.position(0.0, 1.0, 5.0)
 camera.fov(30)
-camera.up(0, -1, 0)
+camera.up(0, 1, 0)
 
-pixels = ti.field(dtype=ti.u8, shape=(1024, 1024, 3))
-
+save_video = True
 result_dir = "./taichi_output"
-video_manager = ti.tools.VideoManager(output_dir=result_dir, framerate=24, automatic_build=False)
+video_manager = ti.tools.VideoManager(output_dir=result_dir+'/video', framerate=30, automatic_build=False)
+
+dt = 0.01
+# mesh = Mesh("obj_files/square_16K", scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
+# static_mesh = Mesh()
+# sim = Solver(mesh, static_mesh=static_mesh, min_range=total_min, max_range = total_max, dt=dt, max_iter=1)
+
+total_min_max = ti.Vector.field(3, dtype=ti.f32, shape=2)
+box_v = ti.Vector.field(3, dtype=ti.f32, shape=8)
+box_i = ti.Vector.field(2, dtype=ti.i32, shape=12)
+box_i_np = np.array([[0, 1], [1, 3], [3, 2], [2, 0], [4, 5], [5, 7],
+                    [7, 6], [6, 4], [0, 4], [1, 5], [2, 6], [3, 7]])
+box_v.fill(0.0)
+box_i.from_numpy(box_i_np)
+
+gbox_v = ti.Vector.field(3, dtype=ti.f32, shape=8)
+g_min_max = ti.Vector.field(3, dtype=ti.f32, shape=2)
+g_min_max_np = np.array([[-1.0, -0.5, -1.0], [1.0, 1.5, 1.0]])
+g_min_max.from_numpy(g_min_max_np)
+makeBox(g_min_max, gbox_v)
 
 verts_ti = ti.Vector.field(3, dtype=ti.f32, shape=10475)
 faces_ti = ti.field(dtype=ti.i32, shape=(20908 * 3,))
@@ -50,7 +72,6 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
     cur_frame = args.start_frame
     video_frame = 0
     timer = Timer()
-    t_timer = Timer()
     while True:
         timer.tic()
         # load data
@@ -147,19 +168,43 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         '''
         
         verts_ti.from_torch(verts_torch)
+        min_torch = torch.min(verts_torch, dim=0).values.reshape(1, 3)
+        max_torch = torch.max(verts_torch, dim=0).values.reshape(1, 3)
+        total_min_max_torch = torch.cat([min_torch, max_torch], dim=0)
+        total_min_max.from_torch(total_min_max_torch)
+        applyTransform(total_min_max, scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))
+        makeBox(total_min_max, box_v)
+
+        applyTransform(verts_ti, scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))   # rotate 180 degrees
         if is_first_frame:
             faces_ti.from_numpy(faces_np.reshape(-1))
 
+        # Export mesh
+        # if video_frame >= 100:
+        #     mesh_frame = video_frame - 100
+        #     filepath = "seq_files/body_seq/dummy_" + str(mesh_frame).zfill(4) + ".obj"
+        #     if not os.path.exists(filepath):
+        #         open(filepath, 'w').close()
+        #     mio.write_obj(filepath, verts_ti.to_numpy().astype(np.float64), faces_ti.to_numpy().reshape(-1, 3).astype(np.int_))
+
+
         # Render
         camera.track_user_inputs(window, movement_speed=0.05, hold_key=ti.ui.RMB)
-        camera.lookat(0.0, -1.0, 0.0)
+        camera.lookat(0.0, 0.5, 0.0)
         scene.set_camera(camera)
         scene.ambient_light((0.5, 0.5, 0.5))
-        scene.point_light(pos=(-0.5, -3.0, -3.0), color=(0.3, 0.3, 0.3))
-        scene.point_light(pos=(0.5, -3.0, -3.0), color=(0.3, 0.3, 0.3))
+        scene.point_light(pos=(-0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
+        scene.point_light(pos=(0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
         # scene.particles(verts_ti, radius=0.01, color=(0.5, 0.5, 0.5))
         scene.mesh(vertices=verts_ti, indices=faces_ti, color=(0.5, 0.5, 0.5))
+        scene.lines(gbox_v, width=1.0, indices=box_i, color=(0.0, 1.0, 0.0))
+        scene.lines(box_v, width=1.0, indices=box_i, color=(1.0, 0.0, 0.0))
         canvas.scene(scene)
+
+        if save_video:
+            img = window.get_image_buffer_as_numpy()
+            video_manager.write_frame(img)
+        
         window.show()
 
         '''
@@ -198,6 +243,8 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
     if input_type =='webcam' and input_data is not None:
         input_data.release()
     cv2.destroyAllWindows()
+
+    video_manager.make_video(gif=True, mp4=True)
 
 
 def main():

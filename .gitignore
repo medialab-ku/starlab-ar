@@ -10,3 +10,6 @@ frankmocap/
 detectors/
 *.mp4
 *.pyc
+
+# output folders
+taichi_output/
