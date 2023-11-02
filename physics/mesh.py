@@ -128,18 +128,3 @@ def makeBox(minmax: ti.template(), pos: ti.template()):
     # minmax: [min: vec3, max: vec3], pos: 8x3
     for i in range(8):
         pos[i] = ti.Vector([minmax[i // 4][0], minmax[i // 2 % 2][1], minmax[i % 2][2]])
-
-
-if __name__ == "__main__":
-    ti.init(ti.cpu, debug=True)
-
-    minmax = ti.Vector.field(3, dtype=ti.f32, shape=2)
-    pos = ti.Vector.field(3, dtype=ti.f32, shape=8)
-
-    minmax.fill(0.0)
-    pos.fill(0.0)
-
-    minmax[0] = ti.Vector([-1.0, -1.0, -1.0])
-    minmax[1] = ti.Vector([1.0, 1.0, 1.0])
-    makeBox(minmax, pos, lines)
-    print(pos.to_numpy())

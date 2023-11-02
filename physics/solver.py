@@ -1,4 +1,5 @@
 import taichi as ti
+import numpy as np
 import meshtaichi_patcher as Patcher
 
 
@@ -14,8 +15,20 @@ class Solver:
                  max_iter=1000):
         self.my_mesh = my_mesh
         self.static_mesh = static_mesh
+        self.grid_origin = ti.math.vec3([-4, -4, -4])
+        self.grid_size = ti.math.vec3([8, 8, 8])
         self.grid_min = ti.math.vec3(min_range[0], min_range[1], min_range[2])
         self.grid_max = ti.math.vec3(max_range[0], max_range[1], max_range[2])
+        self.domain_size = self.grid_size - self.grid_origin
+
+
+        self.radius = 0.005
+        self.grid_size = 8 * self.radius
+        self.grid_num = np.ceil(self.domain_size / self.grid_size).astype(int)
+        print("grid size: ", self.grid_num)
+        self.padding = self.grid_size
+
+
         self.k = k
         self.dt = dt
         self.dtSq = dt ** 2
@@ -47,7 +60,6 @@ class Solver:
 
         self.dHat = 1e-3
 
-        self.radius = 0.008
         self.contact_stiffness = 1e3
         self.damping_factor = 1e-4
         self.grid_n = 256
@@ -84,6 +96,99 @@ class Solver:
         self.p = ti.Vector.field(3, dtype=ti.f32, shape=self.num_verts)
         self.Ap = ti.Vector.field(3, dtype=ti.f32, shape=self.num_verts)
         self.z = ti.Vector.field(3, dtype=ti.f32, shape=self.num_verts)
+
+        self.grid_particles_num = ti.field(int, shape=int(self.grid_num[0]*self.grid_num[1]*self.grid_num[2]))
+        self.grid_particles_num_temp = ti.field(int, shape=int(self.grid_num[0]*self.grid_num[1]*self.grid_num[2]))
+        self.prefix_sum_executor = ti.algorithms.PrefixSumExecutor(self.grid_particles_num.shape[0])
+
+        self.max_num_verts = self.num_verts + self.num_verts_static
+        self.grid_ids = ti.field(int, shape=self.max_num_verts)
+        self.grid_ids_buffer = ti.field(int, shape=self.max_num_verts)
+        self.grid_ids_new = ti.field(int, shape=self.max_num_verts)
+        self.cur2org = ti.field(int, shape=self.max_num_verts)
+
+        # self.object_id_buffer = ti.field(dtype=int, shape=self.num_verts)
+        # self.object_id = ti.field(dtype=int, shape=self.num_verts)
+
+    @ti.kernel
+    def update_static_mesh(self, pos: ti.template()):
+        for v in range(self.num_verts_static):
+            self.static_mesh.mesh.verts.x[v] = pos[v]
+            self.verts_static.x[v] = pos[v]
+        # self.static_mesh_transform(scale, rot, trans)
+
+
+    @ti.kernel
+    def counting_sort(self):
+        # FIXME: make it the actual particle num
+        for i in range(self.max_num_verts):
+            I = self.max_num_verts - 1 - i
+            base_offset = 0
+            if self.grid_ids[I] - 1 >= 0:
+                base_offset = self.grid_particles_num[self.grid_ids[I] - 1]
+            self.grid_ids_new[I] = ti.atomic_sub(self.grid_particles_num_temp[self.grid_ids[I]], 1) - 1 + base_offset
+
+        for i in self.grid_ids:
+            new_index = self.grid_ids_new[i]
+            self.cur2org[new_index] = i
+
+        #     self.grid_ids_buffer[new_index] = self.grid_ids[I]
+        #     self.object_id_buffer[new_index] = self.object_id[I]
+        #
+        # for I in range(self.num_verts):
+        #     self.grid_ids[I] = self.grid_ids_buffer[I]
+        #     self.object_id[I] = self.object_id_buffer[I]
+
+
+
+    @ti.func
+    def flatten_grid_index(self, grid_index):
+        return grid_index[0] * self.grid_num[1] * self.grid_num[2] + grid_index[1] * self.grid_num[2] + grid_index[2]
+
+    @ti.func
+    def get_flatten_grid_index(self, pos):
+        return self.flatten_grid_index(self.pos_to_index(pos))
+
+    @ti.kernel
+    def update_grid_id(self):
+        for I in ti.grouped(self.grid_particles_num):
+            self.grid_particles_num[I] = 0
+
+        for v in self.verts:
+            grid_index = self.get_flatten_grid_index(v.x)
+            self.grid_ids[v.id] = grid_index
+            ti.atomic_add(self.grid_particles_num[grid_index], 1)
+
+        for v in self.verts_static:
+            grid_index = self.get_flatten_grid_index(v.x)
+            self.grid_ids[v.id + self.num_verts] = grid_index
+            ti.atomic_add(self.grid_particles_num[grid_index], 1)
+
+        for I in ti.grouped(self.grid_particles_num):
+            self.grid_particles_num_temp[I] = self.grid_particles_num[I]
+
+    def initialize_particle_system(self):
+        self.update_grid_id()
+        self.prefix_sum_executor.run(self.grid_particles_num)
+        self.counting_sort()
+
+    @ti.func
+    def pos_to_index(self, pos):
+        return ( (pos-self.grid_origin) / self.grid_size ).cast(int)
+
+    @ti.func
+    def for_all_neighbors(self, p_i):
+        center_cell = self.pos_to_index(self.verts.x_k[p_i])
+        for offset in ti.grouped(ti.ndrange(*((-1, 2),) * 3)):
+            grid_index = self.flatten_grid_index(center_cell + offset)
+            for p_j in range(self.grid_particles_num[ti.max(0, grid_index-1)], self.grid_particles_num[grid_index]):
+                p_j_cur = self.cur2org[p_j]
+
+                # if p_j_cur < self.num_verts:
+                #     if p_i != p_j_cur:
+                #         self.resolve_self(p_i, p_j_cur)
+                if p_j_cur >= self.num_verts:
+                    self.resolve(p_i, p_j_cur - self.num_verts)
 
 
     @ti.kernel
@@ -221,12 +326,12 @@ class Solver:
             hij = U @ sig @ V.transpose()
             e.hij = hij
 
-        for e in self.edges:
-            h = ti.math.mat2([[e.verts[0].h, 0],
-                              [0, e.verts[1].h]]) + \
-                coef * ti.math.mat2([[0, -1],
-                                     [-1, 0]])
-            e.hinv = h.inverse()
+        # for e in self.edges:
+        #     h = ti.math.mat2([[e.verts[0].h, 0],
+        #                       [0, e.verts[1].h]]) + \
+        #         coef * ti.math.mat2([[0, -1],
+        #                              [-1, 0]])
+        #     e.hinv = h.inverse()
 
     @ti.kernel
     def step_forward(self):
@@ -309,6 +414,10 @@ class Solver:
 
     @ti.kernel
     def handle_contacts(self):
+
+        for v in self.verts:
+            self.for_all_neighbors(v.id)
+
         static_collision_count = 0
         self_collision_count = 0
         loop_count = 0
@@ -324,42 +433,42 @@ class Solver:
         #         loop_count += 1
         #         self.resolve_self(v.id, sv)
 
-        self.static_collision_pair.fill(0)
-        self.self_collision_pair.fill(0)
-        loop_count = 0
-        for v in self.verts:
-            vIdx = self.compute_grid_index(v.x_k)
-            if vIdx[0] < 0 or vIdx[1] < 0 or vIdx[2] < 0:
-                continue
-
-            x_begin = ti.max(vIdx[0] - 1, 0)
-            x_end = ti.min(vIdx[0] + 2, self.grid_n)
-
-            y_begin = ti.max(vIdx[1] - 1, 0)
-            y_end = ti.min(vIdx[1] + 2, self.grid_n)
-
-            z_begin = ti.max(vIdx[2] - 1, 0)
-            z_end = ti.min(vIdx[2] + 2, self.grid_n)
-
-            for neigh_i, neigh_j, neigh_k in ti.ndrange((x_begin, x_end), (y_begin, y_end), (z_begin, z_end)):
-                # on split plane
-                if neigh_k == vIdx[2] and (neigh_i + neigh_j) > (vIdx[0] + vIdx[1]) and neigh_i <= vIdx[0]:
-                    continue
-
-                neigh_linear_idx = neigh_i * self.grid_n * self.grid_n + neigh_j * self.grid_n + neigh_k
-                for p_idx in range(self.static_head[neigh_linear_idx],
-                                      self.static_tail[neigh_linear_idx]):
-                      sv = self.static_particle_id[p_idx]
-                      static_collision_count += 1
-                      self.resolve(v.id, sv)
-
-                for p_idx in range(self.dynamic_head[neigh_linear_idx],
-                                   self.dynamic_tail[neigh_linear_idx]):
-                        dv = self.dynamic_particle_id[p_idx]
-                        if v.id >= dv:
-                            continue
-                        self_collision_count += 1
-                        self.resolve_self(v.id, dv)
+        # self.static_collision_pair.fill(0)
+        # self.self_collision_pair.fill(0)
+        # loop_count = 0
+        # for v in self.verts:
+        #     vIdx = self.compute_grid_index(v.x_k)
+        #     if vIdx[0] < 0 or vIdx[1] < 0 or vIdx[2] < 0:
+        #         continue
+        #
+        #     x_begin = ti.max(vIdx[0] - 1, 0)
+        #     x_end = ti.min(vIdx[0] + 2, self.grid_n)
+        #
+        #     y_begin = ti.max(vIdx[1] - 1, 0)
+        #     y_end = ti.min(vIdx[1] + 2, self.grid_n)
+        #
+        #     z_begin = ti.max(vIdx[2] - 1, 0)
+        #     z_end = ti.min(vIdx[2] + 2, self.grid_n)
+        #
+        #     for neigh_i, neigh_j, neigh_k in ti.ndrange((x_begin, x_end), (y_begin, y_end), (z_begin, z_end)):
+        #         # on split plane
+        #         if neigh_k == vIdx[2] and (neigh_i + neigh_j) > (vIdx[0] + vIdx[1]) and neigh_i <= vIdx[0]:
+        #             continue
+        #
+        #         neigh_linear_idx = neigh_i * self.grid_n * self.grid_n + neigh_j * self.grid_n + neigh_k
+        #         for p_idx in range(self.static_head[neigh_linear_idx],
+        #                               self.static_tail[neigh_linear_idx]):
+        #               sv = self.static_particle_id[p_idx]
+        #               static_collision_count += 1
+        #               self.resolve(v.id, sv)
+        #
+        #         for p_idx in range(self.dynamic_head[neigh_linear_idx],
+        #                            self.dynamic_tail[neigh_linear_idx]):
+        #                 dv = self.dynamic_particle_id[p_idx]
+        #                 if v.id >= dv:
+        #                     continue
+        #                 self_collision_count += 1
+        #                 self.resolve_self(v.id, dv)
 
 
         # for i, j, k in ti.ndrange(self.grid_n, self.grid_n, self.grid_n):
@@ -505,27 +614,27 @@ class Solver:
             self.r[v.id] -= alpha * self.Ap[v.id]
 
         # ti.mesh_local(self.z, self.r)
-        for e in self.edges:
-            i, j = e.verts[0].id, e.verts[1].id
-            ri, rj = self.r[i], self.r[j]
-            rx = ti.math.vec2(ri.x, rj.x)
-            ry = ti.math.vec2(ri.y, rj.y)
-            rz = ti.math.vec2(ri.z, rj.z)
-
-            zx = e.hinv @ rx
-            zy = e.hinv @ ry
-            zz = e.hinv @ rz
-
-            zi = ti.math.vec3(zx[0], zy[0], zz[0])
-            zj = ti.math.vec3(zx[1], zy[1], zz[1])
-
-            self.z[i] += zi
-            self.z[j] += zj
-
-
-        ti.mesh_local(self.z)
-        for v in self.verts:
-            self.z[v.id] = self.z[v.id] / v.deg
+        # for e in self.edges:
+        #     i, j = e.verts[0].id, e.verts[1].id
+        #     ri, rj = self.r[i], self.r[j]
+        #     rx = ti.math.vec2(ri.x, rj.x)
+        #     ry = ti.math.vec2(ri.y, rj.y)
+        #     rz = ti.math.vec2(ri.z, rj.z)
+        #
+        #     zx = e.hinv @ rx
+        #     zy = e.hinv @ ry
+        #     zz = e.hinv @ rz
+        #
+        #     zi = ti.math.vec3(zx[0], zy[0], zz[0])
+        #     zj = ti.math.vec3(zx[1], zy[1], zz[1])
+        #
+        #     self.z[i] += zi
+        #     self.z[j] += zj
+        #
+        #
+        # ti.mesh_local(self.z)
+        # for v in self.verts:
+        #     self.z[v.id] = self.z[v.id] / v.deg
 
         ti.mesh_local(self.z, self.r)
         for v in self.verts:
@@ -561,11 +670,13 @@ class Solver:
             if r_2_new <= tol:
                 break
 
+        # query_result1 = ti.profiler.query_kernel_profiler_info(self.cg_iterate.__name__)
+        # print("kernel exec. #: ", query_result1.counter)
 
         # self.add(self.verts.x_k, self.verts.x_k, -1.0, self.verts.dx)
 
     @ti.func
-    def compute_grid_index(self, pos: ti.math.vec3)->ti.math.ivec3:
+    def compute_grid_index(self, pos: ti.math.vec3) -> ti.math.ivec3:
         idx3d = ti.floor((pos - self.grid_min) * self.grid_n / (self.grid_max - self.grid_min), int)
         # idx = idx3d[0] * self.grid_n * self.grid_n + idx3d[1] * self.grid_n + idx3d[2]
         # if idx3d[0] < 0 or idx3d[1] < 0 or idx3d[2] < 0:
@@ -628,6 +739,8 @@ class Solver:
         self.dtSq = self.dt ** 2
 
         ti.profiler.clear_kernel_profiler_info()
+
+        self.initialize_particle_system()
         for sub_step in range(num_sub_steps):
             self.verts.f_ext.fill([0.0, self.gravity, 0.0])
             self.computeVtemp()
@@ -635,9 +748,9 @@ class Solver:
             self.computeY()
             self.verts.x_k.copy_from(self.verts.y)
             # self.set_grid_particles()
-            tol = 1e-3
+            tol = 1e-6
 
-            for i in range(1):
+            for i in range(self.max_iter):
                 # i += 1
                 self.verts.g.fill(0.)
                 self.verts.h.copy_from(self.verts.m)
@@ -645,56 +758,21 @@ class Solver:
 
                 self.newton_pcg(tol=1e-6, max_iter=100)
 
-                # dx_NormSq = self.dot(self.verts.dx, self.verts.dx)
+                dx_NormSq = self.dot(self.verts.dx, self.verts.dx)
 
                 # alpha = 1.0
                 self.step_forward()
-                # if dx_NormSq < tol:
-                #     break
+                if dx_NormSq < tol:
+                    break
 
 
             # print(f'opt iter: {i}')
             # ti.profiler.clear_kernel_profiler_info()
             # for i in range(3):
-            # self.verts.p.fill(0.0)
-            # self.verts.nc.fill(0.0)
-            # self.set_grid_particles()
-            # # self.set_grid_particles()
-            # self.handle_contacts()
-            # query_result1 = ti.profiler.query_kernel_profiler_info(self.set_grid_particles.__name__)
-            # query_result2 = ti.profiler.query_kernel_profiler_info(self.handle_contacts.__name__)
-            # # print("kernel exec. #: ", query_result1.counter, query_result2.counter)
-            # # print(f"Min set_grid_particles: {query_result1.min}, handle_contacts: {query_result2.min}")
-            # # print(f"Max set_grid_particles: {query_result1.max}, handle_contacts: {query_result2.max}")
-            # # print("total[ms]      :", float(query_result1.counter * query_result1.avg), float(query_result2.counter * query_result2.avg))
-            # # print("avg[ms]        :", float(query_result1.avg), float(query_result2.avg))
-            #
-            # query_result = ti.profiler.query_kernel_profiler_info(self.handle_contacts.__name__)
-            # print("kernel exec. #: ", query_result.counter)
-            # print(f"Min: {query_result.min}, Max: {query_result.max}")
-            # print("total[ms]      :", float(query_result.counter * query_result.avg))
-            # print("avg[ms]        :", float(query_result.avg))
-            #
-            # ti.deactivate_all_snodes()
+            self.verts.p.fill(0.0)
+            self.verts.nc.fill(0.0)
+            self.handle_contacts()
             self.computeNextState()
 
-            # self.verts.x_k.copy_from(self.verts.x)
-            # self.verts.p.fill(0.0)
-            # self.verts.nc.fill(0.0)
-            # self.set_grid_particles()
-            # self.handle_contacts()
-            # self.computeNextState()
-
-        cg_iterate_profile = ti.profiler.query_kernel_profiler_info(self.cg_iterate.__name__)
-        print("total cg_iterate call per frame: ", cg_iterate_profile.counter)
-        print("total[ms]     : ", float(cg_iterate_profile.counter * cg_iterate_profile.avg))
-        print("avg[ms]       : ", float(cg_iterate_profile.avg))
-
-        evaluate_gradient_and_hessian_profile = ti.profiler.query_kernel_profiler_info(self.cg_iterate.__name__)
-        print("gradient/hessian call per frame: ", evaluate_gradient_and_hessian_profile.counter)
-        print("total[ms]     : ", float(evaluate_gradient_and_hessian_profile.counter * evaluate_gradient_and_hessian_profile.avg))
-        print("avg[ms]       : ", float(evaluate_gradient_and_hessian_profile.avg))
-
-
-
-
+        query_result1 = ti.profiler.query_kernel_profiler_info(self.cg_iterate.__name__)
+        print("kernel exec. #: ", query_result1.counter)

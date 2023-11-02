@@ -25,11 +25,12 @@ from mocap_utils.timer import Timer
 
 from physics.mesh import Mesh, applyTransform, makeBox
 from physics.solver import Solver
+from physics.math import create_batch_eyes
 
 import renderer.image_utils as imu
 from renderer.viewer2D import ImShow
 
-ti.init(kernel_profiler=True, arch=ti.cuda, device_memory_GB=8)
+ti.init(kernel_profiler=True, arch=ti.cuda, device_memory_GB=16)
 
 window = ti.ui.Window("Display Mesh", (640, 480), vsync=True)
 canvas = window.get_canvas()
@@ -40,37 +41,42 @@ camera.position(0.0, 1.0, 5.0)
 camera.fov(30)
 camera.up(0, 1, 0)
 
-save_video = True
+save_video = False
 result_dir = "./taichi_output"
 video_manager = ti.tools.VideoManager(output_dir=result_dir+'/video', framerate=30, automatic_build=False)
 
-dt = 0.01
-# mesh = Mesh("obj_files/square_16K", scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
-# static_mesh = Mesh()
-# sim = Solver(mesh, static_mesh=static_mesh, min_range=total_min, max_range = total_max, dt=dt, max_iter=1)
+dt = 0.003
+mesh = Mesh("obj_files/square_big.obj", scale=0.1, trans=ti.math.vec3(0.0, 1.3, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
+static_mesh = Mesh("obj_files/dummy_human.obj", scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
 
 total_min_max = ti.Vector.field(3, dtype=ti.f32, shape=2)
 box_v = ti.Vector.field(3, dtype=ti.f32, shape=8)
 box_i = ti.Vector.field(2, dtype=ti.i32, shape=12)
 box_i_np = np.array([[0, 1], [1, 3], [3, 2], [2, 0], [4, 5], [5, 7],
-                    [7, 6], [6, 4], [0, 4], [1, 5], [2, 6], [3, 7]])
+                     [7, 6], [6, 4], [0, 4], [1, 5], [2, 6], [3, 7]])
 box_v.fill(0.0)
 box_i.from_numpy(box_i_np)
 
 gbox_v = ti.Vector.field(3, dtype=ti.f32, shape=8)
 g_min_max = ti.Vector.field(3, dtype=ti.f32, shape=2)
-g_min_max_np = np.array([[-1.0, -0.5, -1.0], [1.0, 1.5, 1.0]])
+g_min_max_np = np.array([[-2.0, -0.5, -2.0], [2.0, 2.0, 2.0]])
 g_min_max.from_numpy(g_min_max_np)
+
+sim = Solver(mesh, static_mesh=static_mesh, min_range=g_min_max[0], max_range=g_min_max[1], dt=dt, max_iter=1)
 makeBox(g_min_max, gbox_v)
 
-verts_ti = ti.Vector.field(3, dtype=ti.f32, shape=10475)
-faces_ti = ti.field(dtype=ti.i32, shape=(20908 * 3,))
+human_verts_ti = ti.Vector.field(3, dtype=ti.f32, shape=10475)
+human_faces_ti = ti.field(dtype=ti.i32, shape=(20908 * 3,))
 
 def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
     #Setup input data to handle different types of inputs
     input_type, input_data = demo_utils.setup_input(args)
     cur_frame = args.start_frame
     video_frame = 0
+    sim_frame = 0
+    
+    run_sim = True
+    
     timer = Timer()
     while True:
         timer.tic()
@@ -167,7 +173,7 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         pred_mesh_list = demo_utils.extract_mesh_from_output(pred_output_list)
         '''
         
-        verts_ti.from_torch(verts_torch)
+        human_verts_ti.from_torch(verts_torch)
         min_torch = torch.min(verts_torch, dim=0).values.reshape(1, 3)
         max_torch = torch.max(verts_torch, dim=0).values.reshape(1, 3)
         total_min_max_torch = torch.cat([min_torch, max_torch], dim=0)
@@ -175,9 +181,9 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         applyTransform(total_min_max, scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))
         makeBox(total_min_max, box_v)
 
-        applyTransform(verts_ti, scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))   # rotate 180 degrees
+        applyTransform(human_verts_ti, scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))   # rotate 180 degrees
         if is_first_frame:
-            faces_ti.from_numpy(faces_np.reshape(-1))
+            human_faces_ti.from_numpy(faces_np.reshape(-1))
 
         # Export mesh
         # if video_frame >= 100:
@@ -185,8 +191,21 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         #     filepath = "seq_files/body_seq/dummy_" + str(mesh_frame).zfill(4) + ".obj"
         #     if not os.path.exists(filepath):
         #         open(filepath, 'w').close()
-        #     mio.write_obj(filepath, verts_ti.to_numpy().astype(np.float64), faces_ti.to_numpy().reshape(-1, 3).astype(np.int_))
+        #     mio.write_obj(filepath, human_verts_ti.to_numpy().astype(np.float64), human_faces_ti.to_numpy().reshape(-1, 3).astype(np.int_))
 
+        sim.update_static_mesh(human_verts_ti)
+
+        if window.get_event(ti.ui.PRESS):
+            if window.event.key == ' ':
+                run_sim = not run_sim
+
+            if window.event.key == 'r':
+                sim.reset()
+                run_sim = False
+
+        if run_sim:
+            sim_frame += 1
+            sim.update(dt=dt, num_sub_steps=20)
 
         # Render
         camera.track_user_inputs(window, movement_speed=0.05, hold_key=ti.ui.RMB)
@@ -195,8 +214,9 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         scene.ambient_light((0.5, 0.5, 0.5))
         scene.point_light(pos=(-0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
         scene.point_light(pos=(0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
-        # scene.particles(verts_ti, radius=0.01, color=(0.5, 0.5, 0.5))
-        scene.mesh(vertices=verts_ti, indices=faces_ti, color=(0.5, 0.5, 0.5))
+        # scene.particles(human_verts_ti, radius=0.01, color=(0.5, 0.5, 0.5))
+        scene.mesh(vertices=human_verts_ti, indices=human_faces_ti, color=(0.5, 0.5, 0.5))
+        scene.mesh(vertices=sim.verts.x, indices=sim.face_indices, color=(0.3, 0.5, 0.2))
         scene.lines(gbox_v, width=1.0, indices=box_i, color=(0.0, 1.0, 0.0))
         scene.lines(box_v, width=1.0, indices=box_i, color=(1.0, 0.0, 0.0))
         canvas.scene(scene)
