@@ -46,7 +46,7 @@ result_dir = "./taichi_output"
 video_manager = ti.tools.VideoManager(output_dir=result_dir+'/video', framerate=30, automatic_build=False)
 
 dt = 0.003
-mesh = Mesh("obj_files/square_big.obj", scale=0.1, trans=ti.math.vec3(0.0, 1.3, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
+mesh = Mesh("obj_files/poncho_8K.obj", scale=0.7, trans=ti.math.vec3(0.0, 1.5, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
 static_mesh = Mesh("obj_files/dummy_human.obj", scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
 
 total_min_max = ti.Vector.field(3, dtype=ti.f32, shape=2)
@@ -62,7 +62,7 @@ g_min_max = ti.Vector.field(3, dtype=ti.f32, shape=2)
 g_min_max_np = np.array([[-2.0, -0.5, -2.0], [2.0, 2.0, 2.0]])
 g_min_max.from_numpy(g_min_max_np)
 
-sim = Solver(mesh, static_mesh=static_mesh, min_range=g_min_max[0], max_range=g_min_max[1], dt=dt, max_iter=1)
+sim = Solver(mesh, static_mesh=static_mesh, dt=dt, max_iter=1)
 makeBox(g_min_max, gbox_v)
 
 human_verts_ti = ti.Vector.field(3, dtype=ti.f32, shape=10475)
@@ -173,14 +173,25 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         pred_mesh_list = demo_utils.extract_mesh_from_output(pred_output_list)
         '''
         
-        human_verts_ti.from_torch(verts_torch)
-        min_torch = torch.min(verts_torch, dim=0).values.reshape(1, 3)
-        max_torch = torch.max(verts_torch, dim=0).values.reshape(1, 3)
-        total_min_max_torch = torch.cat([min_torch, max_torch], dim=0)
+        cloth_verts_torch = sim.verts.x.to_torch(device=torch.device('cuda'))
+        cloth_min_torch = torch.min(cloth_verts_torch, dim=0).values.reshape(1, 3)
+        cloth_max_torch = torch.max(cloth_verts_torch, dim=0).values.reshape(1, 3)
+
+        min_torch = torch.min(verts_torch, dim=0).values
+        max_torch = torch.max(verts_torch, dim=0).values
+
+        rotated_max_torch = torch.mul(min_torch, torch.tensor([1.0, -1.0, -1.0], device=torch.device('cuda'))).reshape(1, 3)
+        rotated_min_torch = torch.mul(max_torch, torch.tensor([1.0, -1.0, -1.0], device=torch.device('cuda'))).reshape(1, 3)
+
+        total_min_torch = torch.min(torch.cat([rotated_min_torch, cloth_min_torch], dim=0), dim=0).values.reshape(1, 3)
+        total_max_torch = torch.max(torch.cat([rotated_max_torch, cloth_max_torch], dim=0), dim=0).values.reshape(1, 3)
+
+        total_min_max_torch = torch.cat([total_min_torch, total_max_torch], dim=0)
         total_min_max.from_torch(total_min_max_torch)
-        applyTransform(total_min_max, scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))
+        # applyTransform(total_min_max, scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))
         makeBox(total_min_max, box_v)
 
+        human_verts_ti.from_torch(verts_torch)
         applyTransform(human_verts_ti, scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))   # rotate 180 degrees
         if is_first_frame:
             human_faces_ti.from_numpy(faces_np.reshape(-1))
@@ -194,6 +205,7 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         #     mio.write_obj(filepath, human_verts_ti.to_numpy().astype(np.float64), human_faces_ti.to_numpy().reshape(-1, 3).astype(np.int_))
 
         sim.update_static_mesh(human_verts_ti)
+        sim.update_min_max(total_min_max)
 
         if window.get_event(ti.ui.PRESS):
             if window.event.key == ' ':
@@ -215,8 +227,9 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         scene.point_light(pos=(-0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
         scene.point_light(pos=(0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
         # scene.particles(human_verts_ti, radius=0.01, color=(0.5, 0.5, 0.5))
+        scene.particles(sim.verts.x, radius=0.01, color=(0.3, 0.5, 0.2))
         scene.mesh(vertices=human_verts_ti, indices=human_faces_ti, color=(0.5, 0.5, 0.5))
-        scene.mesh(vertices=sim.verts.x, indices=sim.face_indices, color=(0.3, 0.5, 0.2))
+        # scene.mesh(vertices=sim.verts.x, indices=sim.face_indices, color=(0.3, 0.5, 0.2))
         scene.lines(gbox_v, width=1.0, indices=box_i, color=(0.0, 1.0, 0.0))
         scene.lines(box_v, width=1.0, indices=box_i, color=(1.0, 0.0, 0.0))
         canvas.scene(scene)
