@@ -382,7 +382,7 @@ def process_image_keypoints(img, keypoints, input_res=224):
 
 
 #bbr: (minX, minY, width, height)
-def bbox_from_bbr(bbox_XYWH, rescale=1.2, detection_thresh=0.2, imageHeight= None):
+def bbox_from_bbr(bbox_XYWH, rescale=1.0, detection_thresh=0.2, imageHeight= None):
     """Get center and scale for bounding box from openpose detections."""
 
     # bbox= bbr

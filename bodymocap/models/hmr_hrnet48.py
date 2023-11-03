@@ -128,7 +128,7 @@ class HMR(nn.Module):
         if self.useCLIFF:
             # Taken from CLIFF repository
             cx, cy = bbox_center[:, 0], bbox_center[:, 1]
-            b = bbox_scale * 200 / 1.2
+            b = bbox_scale * 200 / 1.0
             bbox_info = torch.stack([cx - img_w / 2., cy - img_h / 2., b],
                                     dim=-1)
             bbox_info[:, :2] = bbox_info[:, :2] / cam_intrinsics[:, 0, 0].unsqueeze(-1)   # [-1, 1]
