@@ -30,7 +30,7 @@ from physics.math import create_batch_eyes
 import renderer.image_utils as imu
 from renderer.viewer2D import ImShow
 
-ti.init(kernel_profiler=True, arch=ti.cuda, device_memory_GB=16)
+ti.init(kernel_profiler=True, arch=ti.cuda, device_memory_GB=8)
 
 window = ti.ui.Window("Display Mesh", (640, 480), vsync=True)
 canvas = window.get_canvas()
@@ -46,8 +46,9 @@ result_dir = "./taichi_output"
 video_manager = ti.tools.VideoManager(output_dir=result_dir+'/video', framerate=30, automatic_build=False)
 
 dt = 0.003
-mesh = Mesh("obj_files/poncho_8K.obj", scale=0.7, trans=ti.math.vec3(0.0, 1.5, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
-static_mesh = Mesh("obj_files/dummy_human.obj", scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
+mesh = Mesh("obj_files/poncho_8K.obj", scale=0.4, trans=ti.math.vec3(0.0, 1.2, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
+static_mesh = Mesh("obj_files/dummy_human.obj", scale=1.1, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
+applyTransform(static_mesh.mesh.verts.x, scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))
 
 total_min_max = ti.Vector.field(3, dtype=ti.f32, shape=2)
 box_v = ti.Vector.field(3, dtype=ti.f32, shape=8)
@@ -192,7 +193,7 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         makeBox(total_min_max, box_v)
 
         human_verts_ti.from_torch(verts_torch)
-        applyTransform(human_verts_ti, scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))   # rotate 180 degrees
+        applyTransform(human_verts_ti, scale=1.1, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))   # rotate 180 degrees
         if is_first_frame:
             human_faces_ti.from_numpy(faces_np.reshape(-1))
 
@@ -205,7 +206,6 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         #     mio.write_obj(filepath, human_verts_ti.to_numpy().astype(np.float64), human_faces_ti.to_numpy().reshape(-1, 3).astype(np.int_))
 
         sim.update_static_mesh(human_verts_ti)
-        sim.update_min_max(total_min_max)
 
         if window.get_event(ti.ui.PRESS):
             if window.event.key == ' ':
@@ -226,9 +226,11 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         scene.ambient_light((0.5, 0.5, 0.5))
         scene.point_light(pos=(-0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
         scene.point_light(pos=(0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
-        # scene.particles(human_verts_ti, radius=0.01, color=(0.5, 0.5, 0.5))
-        scene.particles(sim.verts.x, radius=0.01, color=(0.3, 0.5, 0.2))
-        scene.mesh(vertices=human_verts_ti, indices=human_faces_ti, color=(0.5, 0.5, 0.5))
+        scene.particles(human_verts_ti, radius=sim.radius, color=(0.5, 0.5, 0.5))
+        # scene.particles(sim.verts_static.x, radius=sim.radius, color=(0.5, 0.5, 0.5))
+        scene.particles(sim.verts.x, radius=sim.radius, color=(0.3, 0.5, 0.2))
+        # scene.mesh(vertices=human_verts_ti, indices=human_faces_ti, color=(0.5, 0.5, 0.5))
+        # scene.mesh(vertices=sim.verts_static.x, indices=sim.face_indices_static, color=(0.5, 0.5, 0.5))
         # scene.mesh(vertices=sim.verts.x, indices=sim.face_indices, color=(0.3, 0.5, 0.2))
         scene.lines(gbox_v, width=1.0, indices=box_i, color=(0.0, 1.0, 0.0))
         scene.lines(box_v, width=1.0, indices=box_i, color=(1.0, 0.0, 0.0))

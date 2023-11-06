@@ -27,6 +27,8 @@ class Mesh:
                                'h': ti.f32,
                                'hc': ti.f32})
 
+
+
         self.mesh.verts.m.fill(1.0)
         self.mesh.verts.v.fill([0.0, 0.0, 0.0])
         self.mesh.verts.x.from_numpy(self.mesh.get_position_as_numpy())
@@ -103,7 +105,6 @@ class Mesh:
 
         for v in self.mesh.verts:
             v.x += self.trans
-
 
 @ti.kernel
 def applyTransform(pos: ti.template(), scale: ti.f32, trans: ti.math.vec3, rot: ti.math.vec3):
