@@ -313,7 +313,7 @@ def main():
     print('Renderer type:', args.renderer_type)
     if args.renderer_type in ['pytorch3d', 'opendr']:
         from renderer.screen_free_visualizer import Visualizer
-    elif args.renderer_type == 'taichi':
+    elif args.renderer_type in ['taichi']:
         from renderer.taichi_visualizer import Visualizer
     else:
         from renderer.visualizer import Visualizer
