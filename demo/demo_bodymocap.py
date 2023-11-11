@@ -27,11 +27,15 @@ from physics.mesh import Mesh, applyTransform, makeBox
 from physics.solver import Solver
 from physics.math import create_batch_eyes
 
+from renderer.taichi_renderer import TaichiRenderer
+from renderer.taichi_camera import Camera
+
 import renderer.image_utils as imu
 from renderer.viewer2D import ImShow
 
 ti.init(kernel_profiler=True, arch=ti.cuda, device_memory_GB=8)
 
+'''
 window = ti.ui.Window("Display Mesh", (640, 480), vsync=True)
 canvas = window.get_canvas()
 canvas.set_background_color((1, 1, 1))
@@ -40,6 +44,9 @@ camera = ti.ui.Camera()
 camera.position(0.0, 1.0, 5.0)
 camera.fov(30)
 camera.up(0, 1, 0)
+'''
+input_size = 640
+gui = ti.GUI("Display Mesh", (input_size, input_size), fast_gui=True)
 
 save_video = False
 result_dir = "./taichi_output"
@@ -69,7 +76,25 @@ makeBox(g_min_max, gbox_v)
 human_verts_ti = ti.Vector.field(3, dtype=ti.f32, shape=10475)
 human_faces_ti = ti.field(dtype=ti.i32, shape=(20908 * 3,))
 
+camera = ti.ui.Camera()
+camera_pos = ti.math.vec3(0.0, 1.0, 2.0)
+camera.position(camera_pos[0], camera_pos[1], camera_pos[2])
+camera.fov(90)
+camera.up(0, 1, 0)
+
+renderer = TaichiRenderer(
+    input_size=input_size,
+    mesh=mesh,
+    static_mesh=static_mesh,
+    camera=camera,
+    bg=ti.math.vec3([1.0, 1.0, 1.0])
+)
+
+
+###########################################################################################
 def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
+    frame = 0
+
     #Setup input data to handle different types of inputs
     input_type, input_data = demo_utils.setup_input(args)
     cur_frame = args.start_frame
@@ -79,7 +104,7 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
     run_sim = True
     
     timer = Timer()
-    while True:
+    while gui.running:
         timer.tic()
         # load data
         load_bbox = False
@@ -197,29 +222,49 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         if is_first_frame:
             human_faces_ti.from_numpy(faces_np.reshape(-1))
 
+        '''
         # Export mesh
-        # if video_frame >= 100:
-        #     mesh_frame = video_frame - 100
-        #     filepath = "seq_files/body_seq/dummy_" + str(mesh_frame).zfill(4) + ".obj"
-        #     if not os.path.exists(filepath):
-        #         open(filepath, 'w').close()
-        #     mio.write_obj(filepath, human_verts_ti.to_numpy().astype(np.float64), human_faces_ti.to_numpy().reshape(-1, 3).astype(np.int_))
-
+        if video_frame >= 100:
+            mesh_frame = video_frame - 100
+            filepath = "seq_files/body_seq/dummy_" + str(mesh_frame).zfill(4) + ".obj"
+            if not os.path.exists(filepath):
+                open(filepath, 'w').close()
+            mio.write_obj(filepath, human_verts_ti.to_numpy().astype(np.float64), human_faces_ti.to_numpy().reshape(-1, 3).astype(np.int_))
+        '''
+            
         sim.update_static_mesh(human_verts_ti)
-
-        if window.get_event(ti.ui.PRESS):
+        '''
+        if gui.get_event(ti.ui.PRESS):
             if window.event.key == ' ':
                 run_sim = not run_sim
 
             if window.event.key == 'r':
                 sim.reset()
                 run_sim = False
+        '''
 
         if run_sim:
             sim_frame += 1
             sim.update(dt=dt, num_sub_steps=20)
 
-        # Render
+        # camera.lookat(lookat[0], lookat[1], lookat[2])
+        if gui.get_event(ti.GUI.PRESS):
+            if gui.event.key == ti.GUI.ESCAPE:
+                break
+        camera.track_user_inputs(gui, movement_speed=0.05, hold_key=ti.GUI.RMB)
+        camera.lookat(0.0, 0.5, 0.0)
+        renderer.set_camera(camera)
+
+        renderer.update_mesh_pos(sim.verts.x)
+        renderer.update_static_mesh_pos(human_verts_ti)
+        renderer.draw()
+        gui.set_image(renderer.pixel)
+        # print(renderer.pixel.to_numpy())
+        gui.show()
+        frame += 1
+        
+        '''
+        # Render with Taichi default renderer
         camera.track_user_inputs(window, movement_speed=0.05, hold_key=ti.ui.RMB)
         camera.lookat(0.0, 0.5, 0.0)
         scene.set_camera(camera)
@@ -241,9 +286,9 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
             video_manager.write_frame(img)
         
         window.show()
-
         '''
-        # visualization
+        '''
+        # visualization with other renderer
         if visualizer is not None:
             res_img = visualizer.visualize(
                 img_original_bgr,
@@ -281,7 +326,9 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
 
     video_manager.make_video(gif=True, mp4=True)
 
+###########################################################################################
 
+###########################################################################################
 def main():
     args = DemoOptions().parse()
 
@@ -313,15 +360,15 @@ def main():
     print('Renderer type:', args.renderer_type)
     if args.renderer_type in ['pytorch3d', 'opendr']:
         from renderer.screen_free_visualizer import Visualizer
-    elif args.renderer_type in ['taichi']:
-        from renderer.taichi_visualizer import Visualizer
     else:
         from renderer.visualizer import Visualizer
     visualizer = Visualizer(args.renderer_type)
 
-
+    if args.renderer_type == 'taichi':
+        visualizer = None
     run_body_mocap(args, body_bbox_detector, body_mocap, visualizer)
 
+###########################################################################################
 
 if __name__ == '__main__':
     main()

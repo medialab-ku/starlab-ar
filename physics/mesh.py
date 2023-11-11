@@ -57,6 +57,12 @@ class Mesh:
         self.computeInitialLength()
         self.mesh.verts.x0.copy_from(self.mesh.verts.x)
 
+        self.model_mat = self.computeModelMat()
+        i_t_model_4x4 = self.model_mat.inverse().transpose()
+        self.inv_trans_model = ti.Matrix([[i_t_model_4x4[0, 0], i_t_model_4x4[0, 1], i_t_model_4x4[0, 2]],
+                                          [i_t_model_4x4[1, 0], i_t_model_4x4[1, 1], i_t_model_4x4[1, 2]],
+                                          [i_t_model_4x4[2, 0], i_t_model_4x4[2, 1], i_t_model_4x4[2, 2]]])
+
 
     @ti.kernel
     def computeInitialLength(self):
@@ -64,6 +70,26 @@ class Mesh:
             e.l0 = (e.verts[0].x - e.verts[1].x).norm()
             e.vid[0] = e.verts[0].id
             e.vid[1] = e.verts[1].id
+
+    @ti.kernel
+    def computeModelMat(self) -> ti.types.matrix(4, 4, ti.f32):
+        s = ti.math.vec3(self.scale, self.scale, self.scale)
+        S = ti.Matrix([[s[0], 0.0, 0.0, 0.0],
+                        [0.0, s[1], 0.0, 0.0],
+                        [0.0, 0.0, s[2], 0.0],
+                        [0.0, 0.0, 0.0, 1.0]])
+
+        rad = ti.math.radians(self.rot)
+        R = ti.cast(ti.math.rotation3d(rad[0], rad[1], rad[2]), ti.f32)
+
+        T = ti.Matrix([[1.0, 0.0, 0.0, 0.0],
+                       [0.0, 1.0, 0.0, 0.0],
+                       [0.0, 0.0, 1.0, 0.0],
+                       [self.trans[0], self.trans[1], self.trans[2], 1.0]])
+        mat_model = S @ R @ T
+        return mat_model
+    
+
 
     @ti.kernel
     def initFaceIndices(self):

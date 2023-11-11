@@ -33,7 +33,7 @@ class Visualizer(object):
         rendererType ='opengl_gui'          #nongui or gui
     ):
         self.rendererType = rendererType
-        if rendererType != "opengl_gui" and rendererType!= "opengl":
+        if rendererType != "opengl_gui" and rendererType!= "opengl" and rendererType!="taichi":
             print("Wrong rendererType: {rendererType}")
             assert False
 
