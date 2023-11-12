@@ -2,6 +2,16 @@ import taichi as ti
 import numpy as np
 import torch
 
+ti.init(arch=ti.gpu, device_memory_GB=6)
+
+buffer = ti.types.struct(
+    depth=ti.f32,
+    color=ti.math.vec3,
+    normal=ti.math.vec3,
+    texcoord=ti.math.vec2,
+    frag_pos=ti.math.vec3,
+    index=ti.i32)
+
 
 @ti.data_oriented
 class TaichiRenderer():
@@ -47,9 +57,13 @@ class TaichiRenderer():
         self.frag_pos = ti.Vector.field(3, dtype=ti.f32, shape=self.num_v)
         self.frag_pos.fill(0.0)
 
+        self.kEpsilon = 1e-8
         self.z_buffer = ti.field(dtype=ti.f32, shape=(self.w, self.h))
-        self.z_buffer.fill(-10.0)
+        self.z_buffer.fill(-1000.0)
         self.pixel = ti.Vector.field(3, dtype=float, shape=(self.w, self.h))
+
+        self.buffer_array = buffer.field(shape=(self.w, self.h, 2))
+        self.initialize_buffer_array()
 
         self.light_pos = ti.Vector([15.0, 15.0, 15.0])
         self.light_color = ti.Vector([0.7, 0.7, 0.7])
@@ -59,14 +73,24 @@ class TaichiRenderer():
         self.n_count = ti.field(dtype=ti.i32, shape=self.num_v)
         self.compute_normal()
 
+        self.ambient = 0.8
+        self.specular = 0.5
+
+
         print(f'Renderer initialized: #v={self.num_v}, #f={self.num_f}')
         
 
     @ti.kernel
-    def initialize_window(self):
-        for i, j in self.z_buffer:
-            self.z_buffer[i, j] = -10.0
-            self.pixel[i, j] = self.background
+    def initialize_buffer_array(self):
+        _buffer = buffer(depth=-1000.0,
+                         color=self.background,
+                         normal=ti.Vector([1.0, 0.0, 0.0]),
+                         texcoord=ti.Vector([-1.0, -1.0]),
+                         frag_pos=ti.Vector([-1.0, -1.0, -1.0]),
+                         index=-1)
+        for i, j in ti.ndrange(self.w, self.h):
+            for k in ti.static(range(2)):
+                self.buffer_array[i, j, k] = _buffer
 
     @ti.kernel
     def compute_normal(self):
@@ -86,6 +110,13 @@ class TaichiRenderer():
         for i in range(self.num_v):
             self.normal[i] /= self.n_count[i]
             self.normal[i] = self.normal[i].normalized()
+
+
+    @ti.kernel
+    def initialize_window(self):
+        for i, j in ti.ndrange(self.w, self.h):
+            self.z_buffer[i, j] = -1000.0
+            self.pixel[i, j] = self.background
 
     @ti.kernel
     def vertex_shader(self, view_mat: ti.types.matrix(4, 4, ti.f32), proj_mat: ti.types.matrix(4, 4, ti.f32)):
@@ -122,14 +153,45 @@ class TaichiRenderer():
         clip = ti.Vector([pos[0], pos[1], pos[2], 1.0]) @ vp_trans
         clip /= clip[3]
         return clip
-    
+
     @ti.func
     def get_NDC_pos(self, pos):
         vp_trans_inv = ti.Matrix([[2.0 / self.w, 0.0, 0.0, 0.0],
-                                    [0.0, 2.0 / self.h, 0.0, 0.0],
-                                    [0.0, 0.0, 1.0, 0.0],
-                                    [-1.0, -1.0, 0.0, 1.0]])
+                                  [0.0, 2.0 / self.h, 0.0, 0.0],
+                                  [0.0, 0.0, 1.0, 0.0],
+                                  [-1.0, -1.0, 0.0, 1.0]])
         return pos @ vp_trans_inv
+
+    @ti.func
+    def point_line_distance(self, p, v0, v1):
+        v1v0 = v1 - v0
+        l2 = ti.math.dot(v1v0, v1v0)  # |v1 - v0|^2
+        dist = 0.0
+        if l2 <= self.kEpsilon:
+            dist = ti.math.dot(p-v1, p-v1)       # v0 == v1
+        else:
+            t = ti.math.dot(p - v0, v1v0) / l2
+            t = ti.math.clamp(t, 0.0, 1.0)
+            proj = v0 + t * v1v0
+            delta_p = proj - p
+            dist = ti.math.dot(delta_p, delta_p)
+        return dist
+
+    @ti.func
+    def point_triangle_distance(self, p, v0, v1, v2):
+        e01_dist = self.point_line_distance(p, v0, v1)
+        e02_dist = self.point_line_distance(p, v0, v2)
+        e12_dist = self.point_line_distance(p, v1, v2)
+        min_dist = ti.min(ti.min(e01_dist, e02_dist), e12_dist)
+        return min_dist
+
+    @ti.func
+    def barycentric_coord(self, p, v0, v1, v2):
+        area = self.tri_area(v2, v0, v1) + self.kEpsilon   # 2 x area of triangle
+        w0 = self.tri_area(p, v1, v2) / area
+        w1 = self.tri_area(p, v2, v0) / area
+        w2 = self.tri_area(p, v0, v1) / area
+        return ti.math.vec3(w0, w1, w2)
 
     @ti.func
     def tri_area(self, p1, p2, p3):
@@ -137,12 +199,22 @@ class TaichiRenderer():
         area = (p2[0] - p1[0]) * (p3[1] - p1[1]) - \
                (p3[0] - p1[0]) * (p2[1] - p1[1])
         return area
-    
-    @ti.func
-    def dist_point_line(self, l1, l2, p):
-        # l1, l2, and p are 2D vectors
-        return (l2[1] - l1[1]) * p[0] - (l2[0] - l1[0]) * p[1] + l2[0] * l1[1] - l2[1] * l1[0]
 
+    @ti.func
+    def set_buffer(self, x, y, buf):
+        # check z-buffer
+        if self.buffer_array[x, y, 0].index == -1 and buf.depth > self.z_buffer[x, y]:
+            self.buffer_array[x, y, 0] = buf
+        else:
+            if self.buffer_array[x, y, 0].depth < buf.depth:
+                self.buffer_array[x, y, 1] = self.buffer_array[x, y, 0]
+                self.buffer_array[x, y, 0] = buf
+            else:
+                if self.buffer_array[x, y, 1].index == -1:
+                    self.buffer_array[x, y, 1] = buf
+                else:
+                    if self.buffer_array[x, y, 1].depth < buf.depth:
+                        self.buffer_array[x, y, 1] = buf
 
     @ti.kernel
     def rasterizer(self):
@@ -181,41 +253,79 @@ class TaichiRenderer():
             c2_2d = ti.Vector([c2[0], c2[1]])
             c3_2d = ti.Vector([c3[0], c3[1]])
             area = self.tri_area(c1_2d, c2_2d, c3_2d)
-            # print(area)
+            # print('p', p1_2d, p2_2d, p3_2d)
 
             # backface culling
-            if area < 0:
+            if area <= 0.0:
                 continue
 
+
             # compute barycentric coordinates
-            for x, y in ti.ndrange((min_x, max_x+1), (min_y, max_y)):
-                p = ti.Vector([x+0.5, y+0.5])
+            for x, y in ti.ndrange((min_x-1, max_x+1), (min_y-1, max_y+1)):
+                p = ti.Vector([x + 0.5, y + 0.5])
 
-                # check if pixel is inside triangle
-                w0 = self.tri_area(c2_2d, c3_2d, p)
-                w1 = self.tri_area(c3_2d, c1_2d, p)
-                w2 = self.tri_area(c1_2d, c2_2d, p)
+                dist = self.point_triangle_distance(p, c1_2d, c2_2d, c3_2d)
 
-                # if inside triangle
-                if w0 > 0.0 and w1 > 0.0 and w2 > 0.0:
+                # # check if pixel is inside triangle
+                # w0 = self.tri_area(c2_2d, c3_2d, p)
+                # w1 = self.tri_area(c3_2d, c1_2d, p)
+                # w2 = self.tri_area(c1_2d, c2_2d, p)
+                #
+                # # if inside triangle
+                # if w0 >= 0.0 and w1 >= 0.0 and w2 >= 0.0:
+                #     area = w0 + w1 + w2
+                #     w0 /= area
+                #     w1 /= area
+                #     w2 /= area
+                w = self.barycentric_coord(p, c1_2d, c2_2d, c3_2d)
+                w0 = w[0]
+                w1 = w[1]
+                w2 = w[2]
+                if w0 >= 0.0 and w1 >= 0.0 and w2 >= 0.0:
                     # compute depth
                     depth = w0 * c1[2] + w1 * c2[2] + w2 * c3[2]
-                    diff = depth - self.z_buffer[x, y]
-                    # if ti.atomic_max(0.0, diff) > 0.0:
-                    if diff > 0.0:
-                        self.z_buffer[x, y] = depth
 
-                        # barycentric interpolation
-                        # vtTri = ti.Vector([self.mesh.vtIdx[f, 0], self.mesh.vtIdx[f, 1], self.mesh.vtIdx[f, 2]])
-                        # tex_pos = w0 * self.mesh.vt[vtTri[0]] + w1 * self.mesh.vt[vtTri[1]] + w2 * self.mesh.vt[vtTri[2]]
-                        # normal = (w0 * self.normal[tri[0]] + w1 * self.normal[tri[1]] + w2 * self.normal[tri[2]]).normalized()
-                        # fragment_pos = w0 * self.frag_pos[tri[0]] + w1 * self.frag_pos[tri[1]] + w2 * self.frag_pos[tri[2]]
-                        # light_dir = (self.light_pos - fragment_pos).normalized()
-                        # obj_color = self.mesh.get_tex_color(tex_pos) / 255.0
-                        # view_dir = (self.camera.eye - fragment_pos).normalized()
-                        # color = self.fragment_shader(normal, obj_color, self.light_color, light_dir, 0.8, view_dir, 0.5)
-                        self.pixel[x, y] = color
-                
+                    # barycentric interpolation
+                    fragment_pos = w0 * self.frag_pos[tri[0]] + w1 * self.frag_pos[tri[1]] + w2 * self.frag_pos[tri[2]]
+                    normal = (w0 * self.normal[tri[0]] + w1 * self.normal[tri[1]] + w2 * self.normal[tri[2]]).normalized()
+                    # vtTri = ti.Vector([self.mesh.vtIdx[f, 0], self.mesh.vtIdx[f, 1], self.mesh.vtIdx[f, 2]])
+                    # tex_pos = w0 * self.mesh.vt[vtTri[0]] + w1 * self.mesh.vt[vtTri[1]] + w2 * self.mesh.vt[vtTri[2]]
+                    tex_pos = ti.Vector([-1.0, -1.0])
+
+                    # obj_color = self.mesh.get_tex_color(tex_pos)
+
+                    self.set_buffer(x, y, buffer(depth=depth,
+                                                 color=color,
+                                                 normal=normal,
+                                                 texcoord=tex_pos,
+                                                 frag_pos=fragment_pos,
+                                                 index=f))
+
+
+    @ti.kernel
+    def z_buffering(self):
+        for x, y in ti.ndrange(self.w, self.h):
+            # check z-buffer
+            if self.buffer_array[x, y, 0].index != -1:
+                fragment_pos = self.buffer_array[x, y, 0].frag_pos
+                light_dir = (self.light_pos - fragment_pos).normalized()
+
+                view_dir = (self.camera.curr_position - fragment_pos).normalized()
+                obj_color = self.buffer_array[x, y, 0].color
+                normal = self.buffer_array[x, y, 0].normal
+                color = self.fragment_shader(normal,
+                                             obj_color,
+                                             self.light_color,
+                                             light_dir,
+                                             self.ambient,
+                                             view_dir,
+                                             self.specular)
+
+                self.pixel[x, y] = color
+            else:
+                self.pixel[x, y] = self.background
+                # self.pixel[x, y] = self.buffer_array[x, y, 0].color
+
 
     @ti.func
     def fragment_shader(self, normal, obj_color, light_color, light_dir, ambient, view_dir, specular):
@@ -224,58 +334,34 @@ class TaichiRenderer():
         ambient_color = ambient * obj_color
 
         # diffusion
-        diff = max(0.0, light_dir.dot(normal))
+        diff = ti.max(0.0, light_dir.dot(normal))
         diffuse_color = diff * light_color
 
         # reflection
         reflect_dir = ti.math.reflect(-light_dir, normal)
-        spec = ti.math.pow(max(0.0, reflect_dir.dot(view_dir)), 32)
+        spec = ti.math.pow(ti.max(0.0, reflect_dir.dot(view_dir)), 32)
         specular_color = specular * spec * light_color
 
         result = (ambient_color + diffuse_color + specular_color) * obj_color
         return result
 
 
-    # @ti.kernel
-    # def swap_buffers(self):
-    #     for i, j in self.pixel:
-    #         self.double_buffer[i, j] = self.pixel[i, j]
-
 
     def draw(self):
         # draw mesh
+        self.initialize_buffer_array()
+        self.initialize_window()
         view_matrix = self.camera.get_view_matrix()
         proj_matrix = self.camera.get_projection_matrix(self.w / self.h)
-        self.initialize_window()
         self.vertex_shader(view_matrix, proj_matrix)
         self.rasterizer()
-        # self.swap_buffers()
+        self.z_buffering()
 
         
     def imwrite(self, filepath: ti.template()):
         img = self.pixel.to_numpy()
         ti.tools.imwrite(img, filepath)
         print("Image saved to", filepath)
-
-    # def test(self):
-    #     pos = ti.math.vec3([1.0, 1.0, 0.0])
-    #     pos4d = ti.Vector([pos[0], pos[1], pos[2], 1.0])
-    #     view = self.camera.get_view_matrix()
-    #     view_mat = ti.Matrix([[view[0, 0], view[0, 1], view[0, 2], view[0, 3]],
-    #                           [view[1, 0], view[1, 1], view[1, 2], view[1, 3]],
-    #                           [view[2, 0], view[2, 1], view[2, 2], view[2, 3]],
-    #                           [view[3, 0], view[3, 1], view[3, 2], view[3, 3]]])
-    #     proj = self.camera.get_projection_matrix(self.w / self.h)
-    #     proj = ti.Matrix([[proj[0, 0], proj[0, 1], proj[0, 2], proj[0, 3]],
-    #                       [proj[1, 0], proj[1, 1], proj[1, 2], proj[1, 3]],
-    #                       [proj[2, 0], proj[2, 1], proj[2, 2], proj[2, 3]],
-    #                       [proj[3, 0], proj[3, 1], proj[3, 2], proj[3, 3]]])
-    #     pos_model = pos4d @ self.model_mat
-    #     pos_m_v = pos_model @ view_mat
-    #     pos_m_v_p = pos_m_v @ proj
-    #     print(pos_model)
-    #     print(pos_m_v)
-    #     print(pos_m_v_p)
 
     def set_camera(self, camera):
         self.camera = camera

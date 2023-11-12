@@ -35,18 +35,6 @@ from renderer.viewer2D import ImShow
 
 ti.init(kernel_profiler=True, arch=ti.cuda, device_memory_GB=8)
 
-'''
-window = ti.ui.Window("Display Mesh", (640, 480), vsync=True)
-canvas = window.get_canvas()
-canvas.set_background_color((1, 1, 1))
-scene = ti.ui.Scene()
-camera = ti.ui.Camera()
-camera.position(0.0, 1.0, 5.0)
-camera.fov(30)
-camera.up(0, 1, 0)
-'''
-input_size = 640
-gui = ti.GUI("Display Mesh", (input_size, input_size), fast_gui=True)
 
 save_video = False
 result_dir = "./taichi_output"
@@ -76,19 +64,32 @@ makeBox(g_min_max, gbox_v)
 human_verts_ti = ti.Vector.field(3, dtype=ti.f32, shape=10475)
 human_faces_ti = ti.field(dtype=ti.i32, shape=(20908 * 3,))
 
-camera = ti.ui.Camera()
-camera_pos = ti.math.vec3(0.0, 1.0, 2.0)
-camera.position(camera_pos[0], camera_pos[1], camera_pos[2])
-camera.fov(90)
-camera.up(0, 1, 0)
+use_default_renderer = True
+if use_default_renderer:
+    gui = ti.ui.Window("Display Mesh", (640, 480), vsync=True)
+    canvas = gui.get_canvas()
+    canvas.set_background_color((1, 1, 1))
+    scene = ti.ui.Scene()
+    camera = ti.ui.Camera()
+    camera.position(0.0, 1.0, 5.0)
+    camera.fov(30)
+    camera.up(0, 1, 0)
+else:
+    input_size = 640
+    gui = ti.GUI("Display Mesh", (input_size, input_size), fast_gui=True)
+    camera = ti.ui.Camera()
+    camera_pos = ti.math.vec3(0.0, 1.0, 2.0)
+    camera.position(camera_pos[0], camera_pos[1], camera_pos[2])
+    camera.fov(90)
+    camera.up(0, 1, 0)
 
-renderer = TaichiRenderer(
-    input_size=input_size,
-    mesh=mesh,
-    static_mesh=static_mesh,
-    camera=camera,
-    bg=ti.math.vec3([1.0, 1.0, 1.0])
-)
+    renderer = TaichiRenderer(
+        input_size=input_size,
+        mesh=mesh,
+        static_mesh=static_mesh,
+        camera=camera,
+        bg=ti.math.vec3([1.0, 1.0, 1.0])
+    )
 
 
 ###########################################################################################
@@ -247,46 +248,51 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
             sim_frame += 1
             sim.update(dt=dt, num_sub_steps=20)
 
-        # camera.lookat(lookat[0], lookat[1], lookat[2])
-        if gui.get_event(ti.GUI.PRESS):
-            if gui.event.key == ti.GUI.ESCAPE:
-                break
-        camera.track_user_inputs(gui, movement_speed=0.05, hold_key=ti.GUI.RMB)
-        camera.lookat(0.0, 0.5, 0.0)
-        renderer.set_camera(camera)
+        if use_default_renderer:
+            camera.track_user_inputs(gui, movement_speed=0.05, hold_key=ti.ui.RMB)
+            camera.lookat(0.0, 0.5, 0.0)
+            scene.set_camera(camera)
+            scene.ambient_light((0.5, 0.5, 0.5))
+            scene.point_light(pos=(-0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
+            scene.point_light(pos=(0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
+            scene.particles(human_verts_ti, radius=sim.radius, color=(0.5, 0.5, 0.5))
+            # scene.particles(sim.verts_static.x, radius=sim.radius, color=(0.5, 0.5, 0.5))
+            scene.particles(sim.verts.x, radius=sim.radius, color=(0.3, 0.5, 0.2))
+            # scene.mesh(vertices=human_verts_ti, indices=human_faces_ti, color=(0.5, 0.5, 0.5))
+            # scene.mesh(vertices=sim.verts_static.x, indices=sim.face_indices_static, color=(0.5, 0.5, 0.5))
+            # scene.mesh(vertices=sim.verts.x, indices=sim.face_indices, color=(0.3, 0.5, 0.2))
+            scene.lines(gbox_v, width=1.0, indices=box_i, color=(0.0, 1.0, 0.0))
+            scene.lines(box_v, width=1.0, indices=box_i, color=(1.0, 0.0, 0.0))
+            canvas.scene(scene)
 
-        renderer.update_mesh_pos(sim.verts.x)
-        renderer.update_static_mesh_pos(human_verts_ti)
-        renderer.draw()
-        gui.set_image(renderer.pixel)
-        # print(renderer.pixel.to_numpy())
-        gui.show()
-        frame += 1
+            if save_video:
+                img = gui.get_image_buffer_as_numpy()
+                video_manager.write_frame(img)
+            
+            gui.show()
+        else:
+            #### Custom renderer
+            camera.lookat(lookat[0], lookat[1], lookat[2])
+            if gui.get_event(ti.GUI.PRESS):
+                if gui.event.key == ti.GUI.ESCAPE:
+                    break
+            camera.track_user_inputs(gui, movement_speed=0.05, hold_key=ti.GUI.RMB)
+            camera.lookat(0.0, 0.5, 0.0)
+            renderer.set_camera(camera)
+
+            renderer.update_mesh_pos(sim.verts.x)
+            renderer.update_static_mesh_pos(human_verts_ti)
+            renderer.draw()
+            gui.set_image(renderer.pixel)
+            # print(renderer.pixel.to_numpy())
+            gui.show()
+            frame += 1
+            #### Custom renderer
         
-        '''
+
         # Render with Taichi default renderer
-        camera.track_user_inputs(window, movement_speed=0.05, hold_key=ti.ui.RMB)
-        camera.lookat(0.0, 0.5, 0.0)
-        scene.set_camera(camera)
-        scene.ambient_light((0.5, 0.5, 0.5))
-        scene.point_light(pos=(-0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
-        scene.point_light(pos=(0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
-        scene.particles(human_verts_ti, radius=sim.radius, color=(0.5, 0.5, 0.5))
-        # scene.particles(sim.verts_static.x, radius=sim.radius, color=(0.5, 0.5, 0.5))
-        scene.particles(sim.verts.x, radius=sim.radius, color=(0.3, 0.5, 0.2))
-        # scene.mesh(vertices=human_verts_ti, indices=human_faces_ti, color=(0.5, 0.5, 0.5))
-        # scene.mesh(vertices=sim.verts_static.x, indices=sim.face_indices_static, color=(0.5, 0.5, 0.5))
-        # scene.mesh(vertices=sim.verts.x, indices=sim.face_indices, color=(0.3, 0.5, 0.2))
-        scene.lines(gbox_v, width=1.0, indices=box_i, color=(0.0, 1.0, 0.0))
-        scene.lines(box_v, width=1.0, indices=box_i, color=(1.0, 0.0, 0.0))
-        canvas.scene(scene)
-
-        if save_video:
-            img = window.get_image_buffer_as_numpy()
-            video_manager.write_frame(img)
         
-        window.show()
-        '''
+
         '''
         # visualization with other renderer
         if visualizer is not None:
