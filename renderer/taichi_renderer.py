@@ -36,11 +36,13 @@ class TaichiRenderer():
         self.mesh_v.from_numpy(mesh.mesh.verts.x.to_numpy())
         self.mesh_f = ti.Vector.field(3, dtype=ti.i32, shape=self.mesh_num_f)
         self.mesh_f.from_numpy(mesh.face_indices.to_numpy().reshape(-1, 3))
+        self.mesh_color = ti.math.vec3([0.5, 0.3, 0.0])
 
         self.s_mesh_v = ti.Vector.field(3, dtype=ti.f32, shape=self.s_mesh_num_v)
         self.s_mesh_v.from_numpy(static_mesh.mesh.verts.x.to_numpy())
         self.s_mesh_f = ti.Vector.field(3, dtype=ti.i32, shape=self.s_mesh_num_f)
         self.s_mesh_f.from_numpy(static_mesh.face_indices.to_numpy().reshape(-1, 3))
+        self.s_mesh_color = ti.math.vec3([0.5, 0.5, 0.5])
 
         self.v = ti.Vector.field(3, dtype=ti.f32, shape=self.num_v)
         self.v.from_numpy(np.concatenate((self.mesh_v.to_numpy(), self.s_mesh_v.to_numpy()), axis=0))
@@ -48,9 +50,7 @@ class TaichiRenderer():
         self.f.from_numpy(np.concatenate((self.mesh_f.to_numpy(), self.s_mesh_f.to_numpy()+np.ones((self.s_mesh_num_f, 3))*(self.mesh_num_v)), axis=0))
 
         self.model_mat = mesh.model_mat
-        self.inv_trans_mat = mesh.inv_trans_model
         self.s_model_mat = static_mesh.model_mat
-        self.s_inv_trans_mat = static_mesh.inv_trans_model
 
         self.ndc_verts = ti.Vector.field(3, dtype=ti.f32, shape=self.num_v)
         self.ndc_verts.fill(0.0)
@@ -108,8 +108,9 @@ class TaichiRenderer():
             self.n_count[tri[2]] += 1
 
         for i in range(self.num_v):
-            self.normal[i] /= self.n_count[i]
-            self.normal[i] = self.normal[i].normalized()
+            if self.n_count[i] > 0:
+                self.normal[i] /= self.n_count[i]
+                self.normal[i] = self.normal[i].normalized()
 
 
     @ti.kernel
@@ -123,13 +124,10 @@ class TaichiRenderer():
         vp = view_mat @ proj_mat
         for i in range(self.num_v):
             model_mat = ti.Matrix.identity(ti.f32, 4)
-            inv_trans_model = ti.Matrix.identity(ti.f32, 3)
-            if i < self.mesh_num_v:
-                model_mat = self.model_mat
-                inv_trans_model = self.inv_trans_mat
-            else:
-                model_mat = self.s_model_mat
-                inv_trans_model = self.s_inv_trans_mat
+            # if i < self.mesh_num_v:
+            #     model_mat = self.model_mat
+            # else:
+            #     model_mat = self.s_model_mat
             mvp = model_mat @ vp
             point = self.v[i]
             model_mvp = ti.Vector([point[0], point[1], point[2], 1.0]) @ mvp
@@ -141,8 +139,6 @@ class TaichiRenderer():
             frag_pos = ti.Vector([point[0], point[1], point[2], 1.0]) @ model_mat
             self.frag_pos[i] = ti.Vector([frag_pos[0], frag_pos[1], frag_pos[2]])
 
-
-            self.normal[i] = self.normal[i] @ inv_trans_model
 
     @ti.func
     def view_port_transform(self, pos):
@@ -219,12 +215,13 @@ class TaichiRenderer():
     @ti.kernel
     def rasterizer(self):
         # TODO: Improving how to find pixels that pass over edges
+        self.compute_normal()
         for f in range(self.num_f):
             color = ti.Vector([0.0, 0.0, 0.0])
             if f < self.mesh_num_f:
-                color = ti.Vector([0.8, 0.53, 0.53])
+                color = self.mesh_color
             else:
-                color = ti.Vector([0.65098039, 0.74117647, 0.85882353])
+                color = self.s_mesh_color
             tri = self.f[f]
 
             # get triangle vertices
@@ -255,8 +252,8 @@ class TaichiRenderer():
             area = self.tri_area(c1_2d, c2_2d, c3_2d)
             # print('p', p1_2d, p2_2d, p3_2d)
 
-            # backface culling
-            if area <= 0.0:
+            # backface culling only in static_mesh
+            if f >= self.mesh_num_f and area < 0.0:
                 continue
 
 
@@ -264,35 +261,27 @@ class TaichiRenderer():
             for x, y in ti.ndrange((min_x-1, max_x+1), (min_y-1, max_y+1)):
                 p = ti.Vector([x + 0.5, y + 0.5])
 
-                dist = self.point_triangle_distance(p, c1_2d, c2_2d, c3_2d)
-
-                # # check if pixel is inside triangle
-                # w0 = self.tri_area(c2_2d, c3_2d, p)
-                # w1 = self.tri_area(c3_2d, c1_2d, p)
-                # w2 = self.tri_area(c1_2d, c2_2d, p)
-                #
-                # # if inside triangle
-                # if w0 >= 0.0 and w1 >= 0.0 and w2 >= 0.0:
-                #     area = w0 + w1 + w2
-                #     w0 /= area
-                #     w1 /= area
-                #     w2 /= area
                 w = self.barycentric_coord(p, c1_2d, c2_2d, c3_2d)
                 w0 = w[0]
                 w1 = w[1]
                 w2 = w[2]
-                if w0 >= 0.0 and w1 >= 0.0 and w2 >= 0.0:
+                if w0 > 0.0 and w1 > 0.0 and w2 > 0.0:
                     # compute depth
                     depth = w0 * c1[2] + w1 * c2[2] + w2 * c3[2]
 
                     # barycentric interpolation
                     fragment_pos = w0 * self.frag_pos[tri[0]] + w1 * self.frag_pos[tri[1]] + w2 * self.frag_pos[tri[2]]
                     normal = (w0 * self.normal[tri[0]] + w1 * self.normal[tri[1]] + w2 * self.normal[tri[2]]).normalized()
-                    # vtTri = ti.Vector([self.mesh.vtIdx[f, 0], self.mesh.vtIdx[f, 1], self.mesh.vtIdx[f, 2]])
-                    # tex_pos = w0 * self.mesh.vt[vtTri[0]] + w1 * self.mesh.vt[vtTri[1]] + w2 * self.mesh.vt[vtTri[2]]
-                    tex_pos = ti.Vector([-1.0, -1.0])
 
-                    # obj_color = self.mesh.get_tex_color(tex_pos)
+                    tex_pos = ti.Vector([-1.0, -1.0])
+                    if f < self.mesh_num_f:
+                        if area < 0.0:
+                            normal = -normal
+                        vtTri = ti.Vector([self.mesh.vtIdx[f, 0], self.mesh.vtIdx[f, 1], self.mesh.vtIdx[f, 2]])
+                        tex_pos = w0 * self.mesh.vt[vtTri[0]] + w1 * self.mesh.vt[vtTri[1]] + w2 * self.mesh.vt[vtTri[2]]
+                        color = self.mesh.get_tex_color(tex_pos)
+                    else:
+                        tex_pos = ti.Vector([-1.0, -1.0])
 
                     self.set_buffer(x, y, buffer(depth=depth,
                                                  color=color,
@@ -308,7 +297,9 @@ class TaichiRenderer():
             # check z-buffer
             if self.buffer_array[x, y, 0].index != -1:
                 fragment_pos = self.buffer_array[x, y, 0].frag_pos
-                light_dir = (self.light_pos - fragment_pos).normalized()
+                light_dir1 = (self.light_pos - fragment_pos).normalized()
+                point_light = ti.math.vec3(self.light_pos[0], self.light_pos[1], -self.light_pos[2])
+                light_dir2 = (point_light - fragment_pos).normalized()
 
                 view_dir = (self.camera.curr_position - fragment_pos).normalized()
                 obj_color = self.buffer_array[x, y, 0].color
@@ -316,33 +307,34 @@ class TaichiRenderer():
                 color = self.fragment_shader(normal,
                                              obj_color,
                                              self.light_color,
-                                             light_dir,
+                                             light_dir1,
+                                             light_dir2,
                                              self.ambient,
                                              view_dir,
                                              self.specular)
 
                 self.pixel[x, y] = color
-            else:
-                self.pixel[x, y] = self.background
                 # self.pixel[x, y] = self.buffer_array[x, y, 0].color
 
 
     @ti.func
-    def fragment_shader(self, normal, obj_color, light_color, light_dir, ambient, view_dir, specular):
+    def fragment_shader(self, normal, obj_color, light_color, light_dir1, light_dir2, ambient, view_dir, specular):
         # Phong shading
         # ambient
         ambient_color = ambient * obj_color
 
         # diffusion
-        diff = ti.max(0.0, light_dir.dot(normal))
-        diffuse_color = diff * light_color
+        diff1 = ti.max(0.0, light_dir1.dot(normal))
+        diff2 = ti.max(0.0, light_dir2.dot(normal))
+        diffuse_color = (diff1 + diff2) * light_color
 
         # reflection
-        reflect_dir = ti.math.reflect(-light_dir, normal)
-        spec = ti.math.pow(ti.max(0.0, reflect_dir.dot(view_dir)), 32)
+        reflect_dir = ti.math.reflect(-light_dir1, normal)
+        spec = ti.math.pow(ti.max(0.0, ti.math.dot(reflect_dir, view_dir)), 32)
         specular_color = specular * spec * light_color
 
         result = (ambient_color + diffuse_color + specular_color) * obj_color
+
         return result
 
 

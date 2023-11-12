@@ -41,7 +41,9 @@ result_dir = "./taichi_output"
 video_manager = ti.tools.VideoManager(output_dir=result_dir+'/video', framerate=30, automatic_build=False)
 
 dt = 0.003
-mesh = Mesh("obj_files/poncho_8K.obj", scale=0.4, trans=ti.math.vec3(0.0, 1.2, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
+tex_obj = "tex_images/poncho_8K_mat.obj"
+tex_path = "tex_images/red-green.jpg"
+mesh = Mesh("obj_files/poncho_8K.obj", scale=0.4, trans=ti.math.vec3(0.0, 1.2, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0), tex_obj=tex_obj, tex_path=tex_path)
 static_mesh = Mesh("obj_files/dummy_human.obj", scale=1.1, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
 applyTransform(static_mesh.mesh.verts.x, scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))
 
@@ -64,7 +66,8 @@ makeBox(g_min_max, gbox_v)
 human_verts_ti = ti.Vector.field(3, dtype=ti.f32, shape=10475)
 human_faces_ti = ti.field(dtype=ti.i32, shape=(20908 * 3,))
 
-use_default_renderer = True
+######### Set Renderer Type ##########
+use_default_renderer = False
 if use_default_renderer:
     gui = ti.ui.Window("Display Mesh", (640, 480), vsync=True)
     canvas = gui.get_canvas()
@@ -223,8 +226,8 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         if is_first_frame:
             human_faces_ti.from_numpy(faces_np.reshape(-1))
 
-        '''
         # Export mesh
+        '''
         if video_frame >= 100:
             mesh_frame = video_frame - 100
             filepath = "seq_files/body_seq/dummy_" + str(mesh_frame).zfill(4) + ".obj"
@@ -234,15 +237,14 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         '''
             
         sim.update_static_mesh(human_verts_ti)
-        '''
+
         if gui.get_event(ti.ui.PRESS):
-            if window.event.key == ' ':
+            if gui.event.key == ' ':
                 run_sim = not run_sim
 
-            if window.event.key == 'r':
+            if gui.event.key == 'r':
                 sim.reset()
                 run_sim = False
-        '''
 
         if run_sim:
             sim_frame += 1
@@ -272,7 +274,6 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
             gui.show()
         else:
             #### Custom renderer
-            camera.lookat(lookat[0], lookat[1], lookat[2])
             if gui.get_event(ti.GUI.PRESS):
                 if gui.event.key == ti.GUI.ESCAPE:
                     break
