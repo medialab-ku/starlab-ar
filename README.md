@@ -39,6 +39,14 @@ sh scripts/install_frankmocap.sh
 ```bash
 python -m demo.demo_bodymocap --input_path webcam  --out_dir ./mocap_output  --single_person --no_display
 ```
+
+If you have problem with the above command because of the relative path, try the following command.
+```bash
+export PYTHONPATH={path to 3D_human_shape}/frankmocap
+python demo/demo_bodymocap.py --input_path webcam  --out_dir ./mocap_output  --single_person --no_display
+```
+
+```bash
 Command line options:
 
 - input_path
@@ -48,11 +56,11 @@ Command line options:
     - ./mocap_output
 - single_person
 - no_display
-
+```
 
 ## Modules required for each model
 
 ### frankmocap
 ```bash
-python -m pip install torch torchvision torchaudio opencv-python torchgeometry smplx loguru yacs timm flatten-dict pytorch-lightning scipy pose3d roma einops
+python -m pip install torch torchvision torchaudio opencv-python torchgeometry smplx loguru yacs timm flatten-dict pytorch-lightning scipy pose3d roma einops taichi meshtaichi_patcher
 ```
