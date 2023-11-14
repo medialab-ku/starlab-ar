@@ -2,19 +2,21 @@ import taichi as ti
 import numpy as np
 import torch
 
-ti.init(arch=ti.gpu, device_memory_GB=6)
+ti.init(kernel_profiler=True, arch=ti.cuda, device_memory_GB=6)
 
 buffer = ti.types.struct(
-    depth=ti.f32,
-    color=ti.math.vec3,
-    normal=ti.math.vec3,
-    texcoord=ti.math.vec2,
-    frag_pos=ti.math.vec3,
-    index=ti.i32)
-
+                        depth=ti.f32,
+                        color=ti.math.vec3,
+                        normal=ti.math.vec3,
+                        texcoord=ti.math.vec2,
+                        frag_pos=ti.math.vec3,
+                        index=ti.i32)
 
 @ti.data_oriented
 class TaichiRenderer():
+
+
+
     # based on pinhole camera model
     def __init__(self, input_size, mesh, static_mesh, camera, bg=ti.math.vec3([1.0, 1.0, 1.0])):
         self.w = input_size
@@ -265,7 +267,8 @@ class TaichiRenderer():
                 w0 = w[0]
                 w1 = w[1]
                 w2 = w[2]
-                if w0 > 0.0 and w1 > 0.0 and w2 > 0.0:
+
+                if w0 >= 0.0 and w1 >= 0.0 and w2 >= 0.0:
                     # compute depth
                     depth = w0 * c1[2] + w1 * c2[2] + w2 * c3[2]
 
@@ -282,7 +285,7 @@ class TaichiRenderer():
                         color = self.mesh.get_tex_color(tex_pos)
                     else:
                         tex_pos = ti.Vector([-1.0, -1.0])
-
+                    
                     self.set_buffer(x, y, buffer(depth=depth,
                                                  color=color,
                                                  normal=normal,
@@ -295,7 +298,9 @@ class TaichiRenderer():
     def z_buffering(self):
         for x, y in ti.ndrange(self.w, self.h):
             # check z-buffer
-            if self.buffer_array[x, y, 0].index != -1:
+            if self.buffer_array[x, y, 0].index != -1 and self.z_buffer[x, y] < self.buffer_array[x, y, 0].depth:
+                if self.buffer_array[x, y, 1].index != -1 and self.buffer_array[x, y, 1].depth > self.buffer_array[x, y, 0].depth:
+                    self.buffer_array[x, y, 0] = self.buffer_array[x, y, 1]
                 fragment_pos = self.buffer_array[x, y, 0].frag_pos
                 light_dir1 = (self.light_pos - fragment_pos).normalized()
                 point_light = ti.math.vec3(self.light_pos[0], self.light_pos[1], -self.light_pos[2])
@@ -312,7 +317,7 @@ class TaichiRenderer():
                                              self.ambient,
                                              view_dir,
                                              self.specular)
-
+                # color = obj_color
                 self.pixel[x, y] = color
                 # self.pixel[x, y] = self.buffer_array[x, y, 0].color
 

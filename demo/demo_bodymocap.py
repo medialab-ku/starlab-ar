@@ -33,17 +33,16 @@ from renderer.taichi_camera import Camera
 import renderer.image_utils as imu
 from renderer.viewer2D import ImShow
 
-ti.init(kernel_profiler=True, arch=ti.cuda, device_memory_GB=8)
-
 
 save_video = False
 result_dir = "./taichi_output"
 video_manager = ti.tools.VideoManager(output_dir=result_dir+'/video', framerate=30, automatic_build=False)
 
-dt = 0.003
+dt = 0.01
 tex_obj = "tex_images/poncho_8K_mat.obj"
 tex_path = "tex_images/red-green.jpg"
-mesh = Mesh("obj_files/poncho_8K.obj", scale=0.4, trans=ti.math.vec3(0.0, 1.2, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0), tex_obj=tex_obj, tex_path=tex_path)
+# mesh = Mesh("obj_files/poncho_8K.obj", scale=0.6, trans=ti.math.vec3(0.0, 1.2, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0), tex_obj=tex_obj, tex_path=tex_path)
+mesh = Mesh("obj_files/square_huge.obj", scale=0.05, trans=ti.math.vec3(0.0, 1.5, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0), tex_obj=tex_obj, tex_path=tex_path)
 static_mesh = Mesh("obj_files/dummy_human.obj", scale=1.1, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
 applyTransform(static_mesh.mesh.verts.x, scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))
 
@@ -60,7 +59,7 @@ g_min_max = ti.Vector.field(3, dtype=ti.f32, shape=2)
 g_min_max_np = np.array([[-2.0, -0.5, -2.0], [2.0, 2.0, 2.0]])
 g_min_max.from_numpy(g_min_max_np)
 
-sim = Solver(mesh, static_mesh=static_mesh, dt=dt, max_iter=1)
+sim = Solver(mesh, static_mesh=static_mesh, static_meshes=None, dt=dt, max_iter=1)
 makeBox(g_min_max, gbox_v)
 
 human_verts_ti = ti.Vector.field(3, dtype=ti.f32, shape=10475)
@@ -78,12 +77,12 @@ if use_default_renderer:
     camera.fov(30)
     camera.up(0, 1, 0)
 else:
-    input_size = 640
+    input_size = 720
     gui = ti.GUI("Display Mesh", (input_size, input_size), fast_gui=True)
     camera = ti.ui.Camera()
-    camera_pos = ti.math.vec3(0.0, 1.0, 2.0)
+    camera_pos = ti.math.vec3(0.0, 1.0, 5.0)
     camera.position(camera_pos[0], camera_pos[1], camera_pos[2])
-    camera.fov(90)
+    camera.fov(30)
     camera.up(0, 1, 0)
 
     renderer = TaichiRenderer(
@@ -246,9 +245,9 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
                 sim.reset()
                 run_sim = False
 
-        if run_sim:
+        if run_sim and frame > 100:
             sim_frame += 1
-            sim.update(dt=dt, num_sub_steps=20)
+            sim.update(dt=dt, num_sub_steps=10)
 
         if use_default_renderer:
             camera.track_user_inputs(gui, movement_speed=0.05, hold_key=ti.ui.RMB)
@@ -257,14 +256,14 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
             scene.ambient_light((0.5, 0.5, 0.5))
             scene.point_light(pos=(-0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
             scene.point_light(pos=(0.5, 3.0, 3.0), color=(0.3, 0.3, 0.3))
-            scene.particles(human_verts_ti, radius=sim.radius, color=(0.5, 0.5, 0.5))
+            # scene.particles(human_verts_ti, radius=sim.radius, color=(0.5, 0.5, 0.5))
             # scene.particles(sim.verts_static.x, radius=sim.radius, color=(0.5, 0.5, 0.5))
-            scene.particles(sim.verts.x, radius=sim.radius, color=(0.3, 0.5, 0.2))
-            # scene.mesh(vertices=human_verts_ti, indices=human_faces_ti, color=(0.5, 0.5, 0.5))
+            # scene.particles(sim.verts.x, radius=sim.radius, color=(0.3, 0.5, 0.2))
+            scene.mesh(vertices=human_verts_ti, indices=human_faces_ti, color=(0.5, 0.5, 0.5))
             # scene.mesh(vertices=sim.verts_static.x, indices=sim.face_indices_static, color=(0.5, 0.5, 0.5))
-            # scene.mesh(vertices=sim.verts.x, indices=sim.face_indices, color=(0.3, 0.5, 0.2))
-            scene.lines(gbox_v, width=1.0, indices=box_i, color=(0.0, 1.0, 0.0))
-            scene.lines(box_v, width=1.0, indices=box_i, color=(1.0, 0.0, 0.0))
+            scene.mesh(vertices=sim.verts.x, indices=sim.face_indices, color=(0.3, 0.5, 0.2))
+            # scene.lines(gbox_v, width=1.0, indices=box_i, color=(0.0, 1.0, 0.0))
+            # scene.lines(box_v, width=1.0, indices=box_i, color=(1.0, 0.0, 0.0))
             canvas.scene(scene)
 
             if save_video:
@@ -272,6 +271,7 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
                 video_manager.write_frame(img)
             
             gui.show()
+            frame += 1
         else:
             #### Custom renderer
             if gui.get_event(ti.GUI.PRESS):
