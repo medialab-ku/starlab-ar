@@ -9,11 +9,7 @@ import taichi as ti
 import meshtaichi_patcher as patcher
 import numpy as np
 import cv2
-import argparse
-import json
-import pickle
-import cyobj.io as mio
-from datetime import datetime
+
 
 from demo_options import DemoOptions
 from bodymocap.body_mocap_api import BodyMocap
@@ -31,7 +27,6 @@ from renderer.taichi_renderer import TaichiRenderer
 from renderer.taichi_camera import Camera
 
 import renderer.image_utils as imu
-from renderer.viewer2D import ImShow
 
 
 save_video = False
@@ -95,7 +90,7 @@ else:
 
 
 ###########################################################################################
-def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
+def run_body_mocap(args, body_bbox_detector, body_mocap):
     frame = 0
 
     #Setup input data to handle different types of inputs
@@ -110,23 +105,10 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
     while gui.running:
         timer.tic()
         # load data
-        load_bbox = False
-
         if input_type =='image_dir':
             if cur_frame < len(input_data):
                 image_path = input_data[cur_frame]
                 img_original_bgr  = cv2.imread(image_path)
-            else:
-                img_original_bgr = None
-
-        elif input_type == 'bbox_dir':
-            if cur_frame < len(input_data):
-                print("Use pre-computed bounding boxes")
-                image_path = input_data[cur_frame]['image_path']
-                hand_bbox_list = input_data[cur_frame]['hand_bbox_list']
-                body_bbox_list = input_data[cur_frame]['body_bbox_list']
-                img_original_bgr  = cv2.imread(image_path)
-                load_bbox = True
             else:
                 img_original_bgr = None
 
@@ -170,8 +152,6 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         print("Frame: ", cur_frame)
 
         h, w, c = img_original_bgr.shape
-
-        
         rgb_img = cv2.resize(cv2.cvtColor(img_original_bgr, cv2.COLOR_BGR2RGB), dsize=(640, 640)) # HWC # resize into squared image
         norm = cv2.normalize(rgb_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
 
@@ -195,6 +175,8 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
 
         # Body Pose Regression
         verts_torch, faces_np, img_h, img_w = body_mocap.regress(img_original_bgr, body_bbox_list)
+        timer.toc(bPrint=True,title="Time")
+
         '''
         # assert len(body_bbox_list) == len(pred_output_list)
         # cv2.imwrite(args.out_dir + '/test' + str(video_frame) + '.png' ,pred_output_list[0]['img_cropped'])
@@ -296,14 +278,6 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         
 
         '''
-        # visualization with other renderer
-        if visualizer is not None:
-            res_img = visualizer.visualize(
-                img_original_bgr,
-                pred_mesh_list = pred_mesh_list, 
-                body_bbox_list = body_bbox_list)
-
-        
             # show result in the screen
             if not args.no_display:
                 res_img = res_img.astype(np.uint8)
@@ -363,18 +337,7 @@ def main():
     print("use_smplx", use_smplx)
     body_mocap = BodyMocap(checkpoint_path, args.smpl_dir, device, use_smplx, poserbert, posebert_seq_len)
 
-
-    # Set Visualizer
-    print('Renderer type:', args.renderer_type)
-    if args.renderer_type in ['pytorch3d', 'opendr']:
-        from renderer.screen_free_visualizer import Visualizer
-    else:
-        from renderer.visualizer import Visualizer
-    visualizer = Visualizer(args.renderer_type)
-
-    if args.renderer_type == 'taichi':
-        visualizer = None
-    run_body_mocap(args, body_bbox_detector, body_mocap, visualizer)
+    run_body_mocap(args, body_bbox_detector, body_mocap)
 
 ###########################################################################################
 

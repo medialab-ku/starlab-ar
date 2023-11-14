@@ -26,19 +26,7 @@ class BodyMocap(object):
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
         # Load parametric model (SMPLX or SMPL)
-        if use_smplx:
-            smplModelPath = smpl_dir + '/SMPLX_NEUTRAL.pkl'
-            self.smpl = SMPLX(smpl_dir,
-                    batch_size=1,
-                    num_betas = 10,
-                    use_pca = False,
-                    create_transl=False).to(self.device)
-            self.use_smplx = True
-        else:
-            smplModelPath = smpl_dir + '/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl'
-            self.smpl = SMPL(smplModelPath, batch_size=1, create_transl=False).to(self.device)
-            self.use_smplx = False
-            self.smplx_cam_head = SMPLXCamHead(img_res=224).to(device)
+        self.smplx_cam_head = SMPLXCamHead(img_res=224).to(device)
 
         #Load pre-trained neural network 
         self.left_hand_pose = torch.eye(3, device=device, dtype=torch.float32).view(
@@ -166,11 +154,6 @@ class BodyMocap(object):
 
                 '''
                 pred_vertices = pred_vertices[0].cpu().numpy()
-
-                # t = time.time()
-                # hmr_output['pred_cam'][0, 0] = self.filter_3d[0](hmr_output['pred_cam'][0, 0], t)
-                # hmr_output['pred_cam'][0, 1] = self.filter_3d[1](hmr_output['pred_cam'][0, 1], t)
-                # hmr_output['pred_cam'][0, 2] = self.filter_3d[2](hmr_output['pred_cam'][0, 2], t)
 
                 pred_camera = hmr_output['pred_cam'].cpu().numpy().ravel()
                 # pred_camera = pred_camera.cpu().numpy().ravel()
