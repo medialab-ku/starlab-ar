@@ -9,7 +9,7 @@ from torchvision.transforms import Normalize
 import time 
 
 from bodymocap.models.head.smplx_cam_head import SMPLXCamHead
-from bodymocap.models import hmr, SMPL, SMPLX, HMR, OneEuroFilter
+from bodymocap.models import SMPL, SMPLX, HMR, OneEuroFilter
 from bodymocap import constants
 from bodymocap.utils.train_utils import load_pretrained_model
 from bodymocap.utils.imutils import crop, crop_bboxInfo, process_image_bbox, process_image_keypoints, bbox_from_keypoints
@@ -41,12 +41,6 @@ class BodyMocap(object):
             self.smplx_cam_head = SMPLXCamHead(img_res=224).to(device)
 
         #Load pre-trained neural network 
-        SMPL_MEAN_PARAMS = './extra_data/body_module/data_from_spin/smpl_mean_params.npz'
-        # self.model_regressor = hmr(SMPL_MEAN_PARAMS).to(self.device)
-        # self.model_regressor = HMR().to(self.device)   #mocapSPIN
-        # checkpoint = torch.load(regressor_checkpoint)
-        # self.model_regressor.load_state_dict(checkpoint['model'], strict=False)
-
         self.left_hand_pose = torch.eye(3, device=device, dtype=torch.float32).view(
                 1, 1, 3, 3)
         
@@ -139,13 +133,11 @@ class BodyMocap(object):
 
             with torch.no_grad():
                 # model forward
-                # pred_rotmat, pred_betas, pred_camera = self.model_regressor(norm_img.to(self.device))
                 hmr_output = self.model_regressor(norm_img.to(self.device), bbox_center=bbox_center, bbox_scale=bbox_scale, img_w=img_w, img_h=img_h)
                 pred_rotmat, pred_betas, pred_camera = hmr_output['pred_pose'], hmr_output['pred_shape'], hmr_output['pred_cam']
                 pred_rotmat = torch.cat((pred_rotmat, self.left_hand_pose.repeat(1, 2, 1, 1)), dim=1)
                 if self.count == 20:
                     self.cam = hmr_output['pred_cam']
-                    # self.cam = pred_camera
                     self.bboxTopLeft = bboxTopLeft
                     self.boxScale_o2n = boxScale_o2n
                     self.shape = pred_betas
@@ -157,7 +149,6 @@ class BodyMocap(object):
                     pred_rotmat = rot_seq[0][-1].unsqueeze(0)
                 if self.cam is not None:
                     hmr_output['pred_cam'] = self.cam
-                    # pred_camera = self.cam
                     bboxTopLeft = self.bboxTopLeft
                     boxScale_o2n = self.boxScale_o2n
                     pred_betas = self.shape
@@ -170,21 +161,8 @@ class BodyMocap(object):
                 shape=hmr_output['pred_shape'])
                 smpl_output.update(hmr_output)
 
-                # Convert rot_mat to aa since hands are always in aa
-                # pred_aa = rotmat3x3_to_angle_axis(pred_rotmat)
-                # pred_rotmat = torch.cat((pred_rotmat, self.random_rotations_cuda.repeat(1, 2, 1, 1)), dim=1)
-                # pred_aa = gu.rotation_matrix_to_angle_axis(pred_rotmat).cuda()
-                # pred_aa = pred_aa.reshape(pred_aa.shape[0], 72)
- 
-                # smpl_output = self.smpl(
-                #     betas=pred_betas, 
-                #     body_pose=pred_aa[:,3:],
-                #     global_orient=pred_aa[:,:3], 
-                #     pose2rot=True)
-
-                # pred_vertices = smpl_output.vertices
                 pred_vertices = smpl_output['vertices'].reshape(-1, 3)
-                # pred_joints_3d = smpl_output.joints
+    
 
                 '''
                 pred_vertices = pred_vertices[0].cpu().numpy()
@@ -224,21 +202,6 @@ class BodyMocap(object):
                 pred_output['faces'] = self.smplx_cam_head.smplx.faces
                 '''
                 pred_faces = self.smplx_cam_head.smplx.faces
-            
-                # if self.use_smplx:
-                #     img_center = np.array((img_original.shape[1], img_original.shape[0]) ) * 0.5
-                #     # right hand
-                #     pred_joints = smpl_output.right_hand_joints[0].cpu().numpy()     
-                #     pred_joints_bbox = convert_smpl_to_bbox(pred_joints, camScale, camTrans)
-                #     pred_joints_img = convert_bbox_to_oriIm(
-                #         pred_joints_bbox, boxScale_o2n, bboxTopLeft, img_original.shape[1], img_original.shape[0])
-                #     pred_output['right_hand_joints_img_coord'] = pred_joints_img
-                #     # left hand 
-                #     pred_joints = smpl_output.left_hand_joints[0].cpu().numpy()
-                #     pred_joints_bbox = convert_smpl_to_bbox(pred_joints, camScale, camTrans)
-                #     pred_joints_img = convert_bbox_to_oriIm(
-                #         pred_joints_bbox, boxScale_o2n, bboxTopLeft, img_original.shape[1], img_original.shape[0])
-                #     pred_output['left_hand_joints_img_coord'] = pred_joints_img
                 
                 # pred_output_list.append(pred_output)
 

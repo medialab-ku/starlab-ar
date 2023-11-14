@@ -17,7 +17,7 @@ from datetime import datetime
 
 from demo_options import DemoOptions
 from bodymocap.body_mocap_api import BodyMocap
-from bodymocap.body_bbox_detector import BodyPoseEstimator
+from bodymocap.body_bbox_detector_yolo import BodyPoseEstimator
 from bodymocap.posebert import PoseBERT
 import mocap_utils.demo_utils as demo_utils
 import mocap_utils.general_utils as gnu
@@ -169,16 +169,17 @@ def run_body_mocap(args, body_bbox_detector, body_mocap, visualizer=None):
         print("--------------------------------------")
         print("Frame: ", cur_frame)
 
-        if load_bbox:
-            body_pose_list = None
-        else:
-            body_pose_list, body_bbox_list = body_bbox_detector.detect_body_pose(
-                img_original_bgr)
-        hand_bbox_list = [None, ] * len(body_bbox_list)
+        h, w, c = img_original_bgr.shape
 
-        # save the obtained body & hand bbox to json file
-        if args.save_bbox_output: 
-            demo_utils.save_info_to_json(args, image_path, body_bbox_list, hand_bbox_list)
+        
+        rgb_img = cv2.resize(cv2.cvtColor(img_original_bgr, cv2.COLOR_BGR2RGB), dsize=(640, 640)) # HWC # resize into squared image
+        norm = cv2.normalize(rgb_img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+
+        img_tensor = torch.Tensor(norm).permute(2, 0, 1).unsqueeze(0).cuda() # H = 0, W = 1 , C = 2
+
+        body_bbox_list = body_bbox_detector.detect_body_pose(img_tensor)
+        body_bbox_list = [[bbox[i] * w /640.0 if i % 2 == 0 else bbox[i] * h /640.0 for i in range(4)]for bbox in body_bbox_list]
+        
 
         if len(body_bbox_list) < 1: 
             print(f"No body deteced: {image_path}")

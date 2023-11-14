@@ -401,11 +401,13 @@ def bbox_from_bbr(bbox_XYWH, rescale=1.0, detection_thresh=0.2, imageHeight= Non
     #         valid_keypoints = np.vstack( (valid_keypoints, np.array(max_pt)) )
 
 
-    center = bbox_XYWH[:2] + 0.5 * bbox_XYWH[2:]
+    wh = [0.5 * bbox_XYWH[2],  0.5 * bbox_XYWH[3]]
+    center = bbox_XYWH[:2] + wh
     bbox_size = max(bbox_XYWH[2:])
     # adjust bounding box tightness
     scale = bbox_size / 200.0
     scale *= rescale
+
     return center, scale#, bbox_XYWH
 
 def bbox_from_json(bbox_file):
@@ -432,7 +434,7 @@ def process_image_bbox(img_original, bbox_XYWH, input_res=224):
     img_original = img_original[:,:,::-1].copy() # PyTorch does not support negative stride at the moment
     img = img_original.copy()
 
-    center, scale = bbox_from_bbr(bbox_XYWH, imageHeight = img.shape[0])
+    center, scale = bbox_from_bbr(bbox_XYWH, imageHeight = img.shape[0], rescale=1.2)
     if center is None:
         return None, None,  None, None, None
 

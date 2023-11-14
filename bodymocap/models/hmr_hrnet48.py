@@ -8,11 +8,9 @@ from .backbone.convnext import convnext_tiny
 
 from .head.hmr_head_orig import HMRHeadOrig
 from .head.hmr_head_cliff import HMRHeadCLIFF
-from .head.hmr_head_cliff_smpl import HMRHeadCLIFFSMPL
 from .head.smplx_cam_head import SMPLXCamHead
 from .head.smplx_cam_head_proj import SMPLXCamHeadProj
 from .head.smplx_head import SMPLXHead
-from .head.smpl_cam_head import SMPLCamHead
 from ..core.config import PRETRAINED_CKPT_FOLDER
 
 extra_data_folder = '/home/svvj/workspace/frankmocap/extra_data/'
