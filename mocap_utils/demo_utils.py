@@ -10,26 +10,26 @@ import json
 import subprocess as sp
 
 
-def setup_render_out(out_dir):
-    if out_dir is not None:
-        gnu.build_dir(out_dir)
-        outputFileName = 'scene_%08d.jpg' # Hardcoded in glViewer.py
+# def setup_render_out(out_dir):
+#     if out_dir is not None:
+#         gnu.build_dir(out_dir)
+#         outputFileName = 'scene_%08d.jpg' # Hardcoded in glViewer.py
 
-        overlaidImageFolder= osp.join(out_dir, 'overlaid')
-        gnu.build_dir(overlaidImageFolder)
+#         overlaidImageFolder= osp.join(out_dir, 'overlaid')
+#         gnu.build_dir(overlaidImageFolder)
 
-        sideImageFolder= osp.join(out_dir, 'side')
-        gnu.build_dir(sideImageFolder)
+#         sideImageFolder= osp.join(out_dir, 'side')
+#         gnu.build_dir(sideImageFolder)
 
-        mergedImageFolder= osp.join(out_dir, 'merged')
-        gnu.build_dir(mergedImageFolder)
+#         mergedImageFolder= osp.join(out_dir, 'merged')
+#         gnu.build_dir(mergedImageFolder)
 
-        res_subdirs = \
-            [outputFileName, overlaidImageFolder, sideImageFolder, mergedImageFolder]
-        return res_subdirs
+#         res_subdirs = \
+#             [outputFileName, overlaidImageFolder, sideImageFolder, mergedImageFolder]
+#         return res_subdirs
     
-    else:
-        return None
+#     else:
+#         return None
 
 
 def __get_input_type(args):
@@ -57,31 +57,31 @@ def __get_input_type(args):
     return input_type
 
 
-def __video_setup(args):
-    video_path = args.input_path
-    video_dir, video_name, video_basename, ext = gnu.analyze_path(video_path)
-    args.seq_name = video_basename
+# def __video_setup(args):
+#     video_path = args.input_path
+#     video_dir, video_name, video_basename, ext = gnu.analyze_path(video_path)
+#     args.seq_name = video_basename
 
-    if args.save_frame:
-        frame_dir = osp.join(args.out_dir, "frames")
-        gnu.build_dir(frame_dir)    
+#     if args.save_frame:
+#         frame_dir = osp.join(args.out_dir, "frames")
+#         gnu.build_dir(frame_dir)    
 
-    render_out_dir = osp.join(args.out_dir, "rendered")
-    gnu.build_dir(render_out_dir)
+#     render_out_dir = osp.join(args.out_dir, "rendered")
+#     gnu.build_dir(render_out_dir)
 
-    mocap_out_dir = osp.join(args.out_dir, "mocap")
-    gnu.build_dir(mocap_out_dir)
+#     mocap_out_dir = osp.join(args.out_dir, "mocap")
+#     gnu.build_dir(mocap_out_dir)
 
 
-def __img_seq_setup(args):
-    seq_dir_path = args.input_path
-    args.seq_name = os.path.basename(args.input_path)
+# def __img_seq_setup(args):
+#     seq_dir_path = args.input_path
+#     args.seq_name = os.path.basename(args.input_path)
 
-    render_out_dir = osp.join(args.out_dir, 'rendered')
-    gnu.build_dir(render_out_dir)
+#     render_out_dir = osp.join(args.out_dir, 'rendered')
+#     gnu.build_dir(render_out_dir)
 
-    mocap_out_dir = osp.join(args.out_dir, "mocap")
-    gnu.build_dir(mocap_out_dir)
+#     mocap_out_dir = osp.join(args.out_dir, "mocap")
+#     gnu.build_dir(mocap_out_dir)
 
 
 def setup_input(args):
@@ -103,7 +103,7 @@ def setup_input(args):
     if input_type =='video':
         cap = cv2.VideoCapture(args.input_path)
         assert cap.isOpened(), f"Failed in opening video: {args.input_path}"
-        __video_setup(args)
+        # __video_setup(args)
         return input_type, cap
 
     elif input_type =='webcam':
@@ -115,22 +115,8 @@ def setup_input(args):
     elif input_type =='image_dir':
         image_list = gnu.get_all_files(args.input_path, image_exts, "relative") 
         image_list = [ osp.join(args.input_path, image_name) for image_name in image_list ]
-        __img_seq_setup(args)
+        # __img_seq_setup(args)
         return input_type, image_list
-
-    elif input_type =='bbox_dir':
-        __img_seq_setup(args)
-        json_files = gnu.get_all_files(args.input_path, '.json', "relative") 
-        input_data = list()
-        for json_file in json_files:
-            json_path = osp.join(args.input_path, json_file)
-            image_path, body_bbox_list, hand_bbox_list = load_info_from_json(json_path)
-            input_data.append(dict(
-                image_path = image_path,
-                hand_bbox_list = hand_bbox_list,
-                body_bbox_list = body_bbox_list
-            ))
-        return input_type, input_data
 
     else:
         assert False, "Unknown input type"
@@ -299,24 +285,24 @@ def save_pred_to_pkl(
     print(f"Prediction saved: {pkl_path}")
  
 
-def save_res_img(out_dir, image_path, res_img):
-    out_dir = osp.join(out_dir, "rendered")
-    img_name = osp.basename(image_path)
-    img_name = img_name[:-4] + '.jpg'           #Always save as jpg
-    res_img_path = osp.join(out_dir, img_name)
-    gnu.make_subdir(res_img_path)
-    cv2.imwrite(res_img_path, res_img)
-    print(f"Visualization saved: {res_img_path}")
+# def save_res_img(out_dir, image_path, res_img):
+#     out_dir = osp.join(out_dir, "rendered")
+#     img_name = osp.basename(image_path)
+#     img_name = img_name[:-4] + '.jpg'           #Always save as jpg
+#     res_img_path = osp.join(out_dir, img_name)
+#     gnu.make_subdir(res_img_path)
+#     cv2.imwrite(res_img_path, res_img)
+#     print(f"Visualization saved: {res_img_path}")
 
 
-def gen_video_out(out_dir, seq_name):
-    outVideo_fileName = osp.join(out_dir, seq_name+'.mp4')
-    print(f">> Generating video in {outVideo_fileName}")
+# def gen_video_out(out_dir, seq_name):
+#     outVideo_fileName = osp.join(out_dir, seq_name+'.mp4')
+#     print(f">> Generating video in {outVideo_fileName}")
 
-    in_dir = osp.abspath(osp.join(out_dir, "rendered"))
-    out_path = osp.abspath(osp.join(out_dir, seq_name+'.mp4'))
-    ffmpeg_cmd = f'ffmpeg -y -f image2 -framerate 25 -pattern_type glob -i "{in_dir}/*.jpg"  -pix_fmt yuv420p -c:v libx264 -x264opts keyint=25:min-keyint=25:scenecut=-1 -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" {out_path}'
-    os.system(ffmpeg_cmd)
-    # print(ffmpeg_cmd.split())
-    # sp.run(ffmpeg_cmd.split())
-    # sp.Popen(ffmpeg_cmd.split(), stdout=sp.PIPE, stderr=sp.PIPE)
+#     in_dir = osp.abspath(osp.join(out_dir, "rendered"))
+#     out_path = osp.abspath(osp.join(out_dir, seq_name+'.mp4'))
+#     ffmpeg_cmd = f'ffmpeg -y -f image2 -framerate 25 -pattern_type glob -i "{in_dir}/*.jpg"  -pix_fmt yuv420p -c:v libx264 -x264opts keyint=25:min-keyint=25:scenecut=-1 -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" {out_path}'
+#     os.system(ffmpeg_cmd)
+#     # print(ffmpeg_cmd.split())
+#     # sp.run(ffmpeg_cmd.split())
+#     # sp.Popen(ffmpeg_cmd.split(), stdout=sp.PIPE, stderr=sp.PIPE)

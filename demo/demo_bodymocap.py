@@ -61,7 +61,7 @@ human_verts_ti = ti.Vector.field(3, dtype=ti.f32, shape=10475)
 human_faces_ti = ti.field(dtype=ti.i32, shape=(20908 * 3,))
 
 ######### Set Renderer Type ##########
-use_default_renderer = False
+use_default_renderer = True
 if use_default_renderer:
     gui = ti.ui.Window("Display Mesh", (640, 480), vsync=True)
     canvas = gui.get_canvas()
@@ -118,12 +118,9 @@ def run_body_mocap(args, body_bbox_detector, body_mocap):
                 video_frame += 1
                 continue
             # save the obtained video frames
-            image_path = osp.join(args.out_dir, "frames", f"{cur_frame:05d}.jpg")
             if img_original_bgr is not None:
                 video_frame += 1
-                if args.save_frame:
-                    gnu.make_subdir(image_path)
-                    cv2.imwrite(image_path, img_original_bgr)
+
 
         elif input_type == 'webcam':    
             _, img_original_bgr = input_data.read()
@@ -132,12 +129,9 @@ def run_body_mocap(args, body_bbox_detector, body_mocap):
                 video_frame += 1
                 continue
             # save the obtained video frames
-            image_path = osp.join(args.out_dir, "frames", f"scene_{cur_frame:05d}.jpg")
             if img_original_bgr is not None:
                 video_frame += 1
-                if args.save_frame:
-                    gnu.make_subdir(image_path)
-                    cv2.imwrite(image_path, img_original_bgr)
+
         else:
             assert False, "Unknown input_type"
 
@@ -162,7 +156,7 @@ def run_body_mocap(args, body_bbox_detector, body_mocap):
         
 
         if len(body_bbox_list) < 1: 
-            print(f"No body deteced: {image_path}")
+            print(f"No body deteced: {cur_frame:05d}")
             continue
 
         #Sort the bbox using bbox size 
@@ -230,7 +224,7 @@ def run_body_mocap(args, body_bbox_detector, body_mocap):
 
         if run_sim and frame > 100:
             sim_frame += 1
-            sim.update(dt=dt, num_sub_steps=10)
+            # sim.update(dt=dt, num_sub_steps=10)
 
         if use_default_renderer:
             camera.track_user_inputs(gui, movement_speed=0.05, hold_key=ti.ui.RMB)
@@ -244,7 +238,7 @@ def run_body_mocap(args, body_bbox_detector, body_mocap):
             # scene.particles(sim.verts.x, radius=sim.radius, color=(0.3, 0.5, 0.2))
             scene.mesh(vertices=human_verts_ti, indices=human_faces_ti, color=(0.5, 0.5, 0.5))
             # scene.mesh(vertices=sim.verts_static.x, indices=sim.face_indices_static, color=(0.5, 0.5, 0.5))
-            scene.mesh(vertices=sim.verts.x, indices=sim.face_indices, color=(0.3, 0.5, 0.2))
+            # scene.mesh(vertices=sim.verts.x, indices=sim.face_indices, color=(0.3, 0.5, 0.2))
             # scene.lines(gbox_v, width=1.0, indices=box_i, color=(0.0, 1.0, 0.0))
             # scene.lines(box_v, width=1.0, indices=box_i, color=(1.0, 0.0, 0.0))
             canvas.scene(scene)
@@ -296,7 +290,7 @@ def run_body_mocap(args, body_bbox_detector, body_mocap):
         '''
 
         timer.toc(bPrint=True,title="Time")
-        print(f"Processed : {image_path}")
+        print(f"Processed : {cur_frame:05d}")
 
     #save images as a video
     # if not args.no_video_out and input_type in ['video', 'webcam']:
