@@ -2,7 +2,6 @@
 
 import os
 import sys
-import os.path as osp
 import torch
 from torchvision.transforms import Normalize
 import taichi as ti
@@ -14,7 +13,6 @@ import cv2
 from demo_options import DemoOptions
 from bodymocap.body_mocap_api import BodyMocap
 from bodymocap.body_bbox_detector_yolo import BodyPoseEstimator
-from bodymocap.posebert import PoseBERT
 import mocap_utils.demo_utils as demo_utils
 import mocap_utils.general_utils as gnu
 from mocap_utils.timer import Timer
@@ -37,7 +35,7 @@ dt = 0.01
 tex_obj = "tex_images/poncho_8K_mat.obj"
 tex_path = "tex_images/red-green.jpg"
 # mesh = Mesh("obj_files/poncho_8K.obj", scale=0.6, trans=ti.math.vec3(0.0, 1.2, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0), tex_obj=tex_obj, tex_path=tex_path)
-mesh = Mesh("obj_files/square_huge.obj", scale=0.05, trans=ti.math.vec3(0.0, 1.5, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0), tex_obj=tex_obj, tex_path=tex_path)
+mesh = Mesh("obj_files/tshirts_8K.obj", scale=1.4, trans=ti.math.vec3(0.0, -0.3, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0), tex_obj=tex_obj, tex_path=tex_path)
 static_mesh = Mesh("obj_files/dummy_human.obj", scale=1.1, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(0.0, 0.0, 0.0))
 applyTransform(static_mesh.mesh.verts.x, scale=1.0, trans=ti.math.vec3(0.0, 0.0, 0.0), rot=ti.math.vec3(180.0, 0.0, 0.0))
 
@@ -272,15 +270,6 @@ def run_body_mocap(args, body_bbox_detector, body_mocap):
         
 
         '''
-            # show result in the screen
-            if not args.no_display:
-                res_img = res_img.astype(np.uint8)
-                ImShow(res_img)
-
-            # save result image
-            # if args.out_dir is not None and args.save_frame:
-            #     demo_utils.save_res_img(args.out_dir, image_path, res_img)
-
             # save predictions to pkl
 
         # if args.save_pred_pkl:
@@ -292,9 +281,6 @@ def run_body_mocap(args, body_bbox_detector, body_mocap):
         timer.toc(bPrint=True,title="Time")
         print(f"Processed : {cur_frame:05d}")
 
-    #save images as a video
-    # if not args.no_video_out and input_type in ['video', 'webcam']:
-    #     demo_utils.gen_video_out(args.out_dir, args.seq_name)
 
     if input_type =='webcam' and input_data is not None:
         input_data.release()
@@ -314,22 +300,11 @@ def main():
     # Set bbox detector
     body_bbox_detector = BodyPoseEstimator()
 
-    # Set Posebert 
-    ckpt_posebert = torch.load(args.ckpt_posebert_fn, map_location=device)
-    SMPL_MEAN_PARAMS = './extra_data/body_module/data_from_spin/smpl_mean_params.npz'
-    init_pose = torch.from_numpy(np.load(SMPL_MEAN_PARAMS)['pose'][:]).unsqueeze(0)
-    posebert = PoseBERT(init_pose=init_pose, in_dim=24*6)
-    posebert = posebert.eval()
-    poserbert = posebert.to(device)
-    posebert_seq_len = 64
-    posebert.load_state_dict(ckpt_posebert['model_state_dict'])
-    # poserbert = None
-
     # Set mocap regressor
     use_smplx = args.use_smplx
     checkpoint_path = args.checkpoint_body_smplx if use_smplx else args.checkpoint_body_smpl
     print("use_smplx", use_smplx)
-    body_mocap = BodyMocap(checkpoint_path, args.smpl_dir, device, use_smplx, poserbert, posebert_seq_len)
+    body_mocap = BodyMocap(checkpoint_path, args.smpl_dir, device, use_smplx)
 
     run_body_mocap(args, body_bbox_detector, body_mocap)
 

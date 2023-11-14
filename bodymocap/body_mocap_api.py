@@ -4,12 +4,10 @@ import cv2
 import sys
 import torch
 import numpy as np
-import pickle 
-from torchvision.transforms import Normalize
 import time 
 
 from bodymocap.models.head.smplx_cam_head import SMPLXCamHead
-from bodymocap.models import SMPL, SMPLX, HMR, OneEuroFilter
+from bodymocap.models import HMR, OneEuroFilter
 from bodymocap import constants
 from bodymocap.utils.train_utils import load_pretrained_model
 from bodymocap.utils.imutils import crop, crop_bboxInfo, process_image_bbox, process_image_keypoints, bbox_from_keypoints
@@ -21,7 +19,7 @@ from scipy.spatial.transform import Rotation
 
 
 class BodyMocap(object):
-    def __init__(self, regressor_checkpoint, smpl_dir, device=torch.device('cuda'), use_smplx=False, posebert = None, posebert_len = 64):
+    def __init__(self, regressor_checkpoint, smpl_dir, device=torch.device('cuda'), use_smplx=False):
 
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -50,17 +48,11 @@ class BodyMocap(object):
         load_pretrained_model(self.model_regressor, cpkt, overwrite_shape_mismatch=True, remove_lightning=True)
 
         self.model_regressor.eval()
-        self.posebert = posebert
-        self.pb_len = posebert_len
-        self.queue_pose = []
         self.shape = None
         self.cam = None
         self.count = 0
         self.boxScale_o2n = None
         self.bboxTopLeft = None
-
-        for i in range(self.pb_len):
-            self.queue_pose.append(torch.zeros((1, 24, 3, 3)).float())
         
         self.filter_config_3d = {
         'freq': 30,        # system frequency about 30 Hz
@@ -68,9 +60,7 @@ class BodyMocap(object):
         'beta': 0.4,       # value refer to the paper
         'dcutoff': 0.4     # not mentioned, empirically set
         }
-        self.filter_3d = (OneEuroFilter(**self.filter_config_3d),
-                OneEuroFilter(**self.filter_config_3d),
-                OneEuroFilter(**self.filter_config_3d))
+        self.filter = gu.create_OneEuroFilter(2.0)
 
         self.detection = (OneEuroFilter(**self.filter_config_3d),
                 OneEuroFilter(**self.filter_config_3d),
@@ -129,12 +119,6 @@ class BodyMocap(object):
                     self.bboxTopLeft = bboxTopLeft
                     self.boxScale_o2n = boxScale_o2n
                     self.shape = pred_betas
-                if self.posebert is not None:
-                    self.queue_pose.pop(0)
-                    self.queue_pose.append(pred_rotmat.float().cpu())
-                    rot_seq = torch.cat([self.queue_pose[j] for j in range(len(self.queue_pose)-1)]).to(self.device)
-                    rot_seq = self.posebert(rotmat=rot_seq.unsqueeze(0))
-                    pred_rotmat = rot_seq[0][-1].unsqueeze(0)
                 if self.cam is not None:
                     hmr_output['pred_cam'] = self.cam
                     bboxTopLeft = self.bboxTopLeft
@@ -142,7 +126,11 @@ class BodyMocap(object):
                     pred_betas = self.shape
 
 
+                #using OE filter for human body
+                pred_rotmat, _, _ = gu.smooth_results(self.filter, pred_rotmat)
+
                 hmr_output['pred_pose'] = pred_rotmat[:,:22,:,:]
+
                 hmr_output['pred_shape'] = pred_betas
                 smpl_output = self.model_regressor.smpl(
                 rotmat=hmr_output['pred_pose'],
@@ -190,43 +178,3 @@ class BodyMocap(object):
 
         return pred_vertices, pred_faces, img_h, img_w
     
-
-    def get_hand_bboxes(self, pred_body_list, img_shape):
-        """
-            args: 
-                pred_body_list: output of body regresion
-                img_shape: img_height, img_width
-            outputs:
-                hand_bbox_list: 
-        """
-        hand_bbox_list = list()
-        for pred_body in pred_body_list:
-            hand_bbox = dict(
-                left_hand = None,
-                right_hand = None
-            )
-            if pred_body is None:
-                hand_bbox_list.append(hand_bbox)
-            else:
-                for hand_type in hand_bbox:
-                    key = f'{hand_type}_joints_img_coord'
-                    pred_joints_vis_img = pred_body[key]
-
-                    if pred_joints_vis_img is not None:
-                        # get initial bbox
-                        x0, x1 = np.min(pred_joints_vis_img[:, 0]), np.max(pred_joints_vis_img[:, 0])
-                        y0, y1 = np.min(pred_joints_vis_img[:, 1]), np.max(pred_joints_vis_img[:, 1])
-                        width, height = x1-x0, y1-y0
-                        # extend the obtained bbox
-                        margin = int(max(height, width) * 0.2)
-                        img_height, img_width = img_shape
-                        x0 = max(x0 - margin, 0)
-                        y0 = max(y0 - margin, 0)
-                        x1 = min(x1 + margin, img_width)
-                        y1 = min(y1 + margin, img_height)
-                        # result bbox in (x0, y0, w, h) format
-                        hand_bbox[hand_type] = np.array([x0, y0, x1-x0, y1-y0]) # in (x, y, w, h ) format
-
-                hand_bbox_list.append(hand_bbox)
-
-        return hand_bbox_list
