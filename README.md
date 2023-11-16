@@ -37,13 +37,13 @@ sh scripts/install_frankmocap.sh
 
 **Step 6**: Execute the model
 ```bash
-python -m demo.demo_bodymocap --input_path webcam  --out_dir ./mocap_output  --single_person --no_display
+python demo/demo_bodymocap.py --input_path vid3.mp4 --single_person
 ```
 
 If you have problem with the above command because of the relative path, try the following command.
 ```bash
 export PYTHONPATH={path to 3D_human_shape}/frankmocap
-python demo/demo_bodymocap.py --input_path webcam  --out_dir ./mocap_output  --single_person --no_display
+python demo/demo_bodymocap.py --input_path vid3.mp4 --single_person
 ```
 
 ```bash
