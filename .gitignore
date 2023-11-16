@@ -1,0 +1,15 @@
+.idea
+.vscode
+
+# large files
+*.psd
+extra_data/
+mocap_output/
+sample_data/
+frankmocap/
+detectors/
+*.mp4
+*.pyc
+
+# output folders
+taichi_output/
