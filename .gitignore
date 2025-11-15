@@ -5,6 +5,8 @@ _screenshots
 _videos
 _ply_files
 history.json
+camera_poses.json
+camera_poses2.json
 *.tar
 *.pkl
 *.npy
@@ -14,6 +16,9 @@ history.json
 *.pdf
 *.code-workspace
 6dgs/
+sdgs/
+data/
+jsons/
 splats/
 cube_high/
 realscene_1/

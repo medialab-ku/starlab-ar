@@ -11,6 +11,7 @@ from pybullet_utils import bullet_client
 from trimesh.transformations import quaternion_from_matrix
 from scipy.spatial.transform import Rotation as R
 import cv2
+import json
 
 def convert_ply_to_obj(ply_path: str, out_obj_path: str,
                        grid_fine: int = 256, grid_coarse: int = 128,
@@ -114,6 +115,24 @@ def inertia_quat(mesh: trimesh.Trimesh):
         np.vstack((np.hstack((R_I, [[0], [0], [0]])), [0, 0, 0, 1]))[:3, :3]
     ).tolist()
 
+def estimate_mass_from_mesh(mesh: trimesh.Trimesh,
+                            density: float = 500.0,   # kg/m^3
+                            unit_scale: float = 1.0,  # e.g., cm→m 이면 0.01
+                            min_mass: float = 0.1,
+                            max_mass: float = 500.0):
+    """메쉬 체적과 밀도로 질량(kg) 추정. 불안정 시 convex hull로 폴백."""
+    # 체적(m^3)로 변환: (unit_scale^3) 적용
+    vol = float(mesh.volume) * (unit_scale ** 3)
+    if (not np.isfinite(vol)) or vol <= 0:
+        vol = float(mesh.convex_hull.volume) * (unit_scale ** 3)
+
+    mass = density * vol
+    # 안전 클램프
+    if not np.isfinite(mass) or mass <= 0:
+        mass = min_mass
+    mass = float(np.clip(mass, min_mass, max_mass))
+    return mass
+
 def load_dynamic_objects(objects_dir: Path, splatviz: Splatviz, world_quat):
     """Discover every ``point_cloud_*.ply`` in *objects_dir* and register them."""
 
@@ -135,6 +154,10 @@ def load_dynamic_objects(objects_dir: Path, splatviz: Splatviz, world_quat):
         # Physics
         # ------------------------------------------------------------------
         mesh = trimesh.load(vhacd_mesh, force="mesh")
+        mass = estimate_mass_from_mesh(
+            mesh, density=400, unit_scale=1,
+            min_mass=0.1, max_mass=500
+        )
         com = mesh.center_mass  # [x, y, z]  in local‑mesh frame
         quat_I = inertia_quat(mesh)
 
@@ -142,7 +165,7 @@ def load_dynamic_objects(objects_dir: Path, splatviz: Splatviz, world_quat):
         vis_id = p.createVisualShape(p.GEOM_MESH, fileName=str(vhacd_mesh))
 
         uid = p.createMultiBody(
-            baseMass=5.0,
+            baseMass=10,
             baseCollisionShapeIndex=col_id,
             baseVisualShapeIndex=vis_id,
             basePosition=[0, 0, 0],
@@ -150,6 +173,7 @@ def load_dynamic_objects(objects_dir: Path, splatviz: Splatviz, world_quat):
             baseInertialFramePosition=com.tolist(),
             baseInertialFrameOrientation=quat_I,
         )
+        print(f"mass for obj {uid}: {mass}")
         p.changeDynamics(
             uid,
             -1,
@@ -159,7 +183,7 @@ def load_dynamic_objects(objects_dir: Path, splatviz: Splatviz, world_quat):
             linearDamping=0.01,  # ↓ 덜 답답하게
             angularDamping=0.01,  # ↓
             frictionAnchor=1,
-            # 선택: restitution=0.0 ~ 0.1  (튀김 줄이려면)
+            restitution=1
         )
 
         # ------------------------------------------------------------------
@@ -187,9 +211,22 @@ def load_dynamic_objects(objects_dir: Path, splatviz: Splatviz, world_quat):
 @click.option("--port", default=7860)
 @click.option("--gan_path", default=None)
 @click.option("--video", default="", help="Video file path (if empty, use webcam 0)", type=str)
-def main(data_path, scene_path, objects_path, checkpoint_path, mode, host, port, gan_path, video=0, rotation=0):
+@click.option("--caminv", default=False)
+@click.option("--jsonfile", default=None)
+def main(data_path, scene_path, objects_path, checkpoint_path, mode, host, port, gan_path, jsonfile, video=0, rotation=0, caminv=False):
+    cfg = None
+    if jsonfile is not None:
+        with open(jsonfile, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        scene_path = cfg["scene_path"]  # str
+        rotation = cfg["rotation"]  # int
+        caminv = cfg["caminv"]  # bool
+    print(scene_path)
+    print(rotation)
+    print(caminv)
+
     #physics
-    p.connect(p.GUI)  # 또는 p.DIRECT
+    p.connect(p.DIRECT)  # 또는 p.DIRECT
     p.setGravity(0, 0, -9.81)
     p.setTimeStep(1 / 240)
     p.setAdditionalSearchPath(pybullet_data.getDataPath())  # plane.urdf 등
@@ -209,6 +246,7 @@ def main(data_path, scene_path, objects_path, checkpoint_path, mode, host, port,
         enableConeFriction=1,
         contactBreakingThreshold=0.02,
     )
+
     if scene_path:
         scene_ply = Path(scene_path)
         setup_static_scene(scene_ply, world_quat)
@@ -216,9 +254,11 @@ def main(data_path, scene_path, objects_path, checkpoint_path, mode, host, port,
     # If scene_path is provided, use it and any .ply files in objects_path
     if scene_path:
         splatviz = Splatviz(data_path=data_path, mode=mode, host=host, port=port,
-                                scene_path=scene_path, objects_path=objects_path, rotation=rotation)
+                                scene_path=scene_path, objects_path=objects_path, rotation=rotation, caminv=caminv, jsonfile=cfg)
     else:
         splatviz = Splatviz(data_path=data_path, mode=mode, host=host, port=port)
+
+
 
     if objects_path:
         load_dynamic_objects(Path(objects_path), splatviz, world_quat)

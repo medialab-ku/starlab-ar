@@ -15,7 +15,7 @@ import shutil
 # ---------------------------------------------------------------------
 # Launch settings (impulse -> initial velocity)
 # ---------------------------------------------------------------------
-LAUNCH_SPEED = 3.0      # forward component [m/s]
+LAUNCH_SPEED = 100# forward component [m/s]
 LAUNCH_UP    = 0.0      # upward component  [m/s]
 LAUNCH_SPIN  = 0.0      # spin around z     [rad/s]
 
@@ -83,7 +83,7 @@ def create_physics_object_from_mesh(obj_path, global_quat, spawn_pos, physicsCli
     vid = p.createVisualShape(p.GEOM_MESH, fileName=obj_path, **_kw_cid(physicsClientId))
 
     bid = p.createMultiBody(
-        baseMass=20.0,
+        baseMass=15.0,
         baseCollisionShapeIndex=cid,
         baseVisualShapeIndex=vid,
         basePosition=spawn_pos.tolist(),
@@ -192,8 +192,16 @@ class LoadWidget(Widget):
                     self.called_objects += 1
 
             # [추가] 클릭해서 배치하는 모드
-            if imgui_utils.button("Insert Object (Click to place)", width=viz.button_w):
-                file_path, obj_path = self.prepare_object_files_for_insertion()
+            if imgui_utils.button("Insert Object (Click, Cube)", width=200):
+                file_path, obj_path = self.prepare_object_files_for_insertion(1)
+                if file_path and obj_path:
+                    # 뷰어에게 "다음 왼쪽클릭으로 이 오브젝트를 소환"하도록 의사표시
+                    self.viz.awaiting_spawn_click = True
+                    self.viz.pending_spawn_files = (file_path, obj_path)
+                    print("Click on the viewport to spawn the object (click-to-place mode enabled).")
+
+            if imgui_utils.button("Insert Object (Click, Ball)", width=200):
+                file_path, obj_path = self.prepare_object_files_for_insertion(0)
                 if file_path and obj_path:
                     # 뷰어에게 "다음 왼쪽클릭으로 이 오브젝트를 소환"하도록 의사표시
                     self.viz.awaiting_spawn_click = True
@@ -211,15 +219,19 @@ class LoadWidget(Widget):
             ply.replace("/", "_").replace("\\", "_").replace(":", "_").replace(".", "_") for ply in self.plys
         ]
 
-    def prepare_object_files_for_insertion(self):
+    def prepare_object_files_for_insertion(self, num):
         """
         클릭-소환을 위해 사용할 (ply 경로, obj 경로)만 '반환'한다.
         - 여기서는 self.plys에 추가하지 않는다. (실제 소환 성공 시 등록)
         - 이미 동일 ply가 목록에 있으면 _{N} 접미사로 복사본을 생성해 경로를 반환한다.
         """
         import os, shutil
-        base_ply = os.path.abspath("objects/pokeball/point_cloud.ply")
-        obj_path = os.path.abspath("objects/pokeball/obj_vhacd.obj")
+        if num == 0:
+            base_ply = os.path.abspath("objects/pokeball/point_cloud.ply")
+            obj_path = os.path.abspath("objects/pokeball/obj_vhacd.obj")
+        else:
+            base_ply = os.path.abspath("objects/cube/point_cloud.ply")
+            obj_path = os.path.abspath("objects/cube/obj_vhacd.obj")
 
         if not os.path.exists(base_ply) or not os.path.exists(obj_path):
             print("Object files not found in 'objects/pokeball' directory")

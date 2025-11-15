@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import sys
 import os
+import shutil
 
 from trimesh.transformations import quaternion_from_matrix
 from scipy.spatial.transform import Rotation as R
@@ -53,7 +54,7 @@ def local_delta_link(p_b, q_b, p_i, q_i, p_t, q_t):
     return tuple(p_rel), tuple(q_rel_wxyz)
 
 class Splatviz(imgui_window.ImguiWindow):
-    def __init__(self, data_path, mode, host, port, gan_path="", scene_path="", objects_path="", rotation=0):
+    def __init__(self, data_path, mode, host, port, gan_path="", scene_path="", objects_path="", rotation=0, caminv=False, jsonfile=None):
         self.code_font_path = "resources/fonts/jetbrainsmono/JetBrainsMono-Regular.ttf"
         self.regular_font_path = "resources/fonts/source_sans_pro/SourceSansPro-Regular.otf"
 
@@ -91,17 +92,23 @@ class Splatviz(imgui_window.ImguiWindow):
         self.rotation = rotation
         self.scene_path = scene_path
         update_all_the_time = True
+        self.traj_gt_multi = []
+        self.traj_gt = []  # [(x,y,z), ...] in Bullet world
         if mode == "default":
             # Pass initial_files to LoadWidget if provided
+            if caminv:
+               up_direction = 1
+            else:
+                up_direction = -1
             self.widgets = [
                 load_ply.LoadWidget(self, data_path, initial_files=initial_files),
-                camera.CamWidget(self),
+                camera.CamWidget(self, up_direction=up_direction),
                 camera_sequence.CameraSequenceWidget(self),
                 performance.PerformanceWidget(self),
                 save.CaptureWidget(self),
                 render.RenderWidget(self),
                 edit.EditWidget(self),
-                trajectory.TrajectoryWidget(self),
+                trajectory.TrajectoryWidget(self, jsonfile),
                 eval.EvalWidget(self),
             ]
             renderer = GaussianRenderer()
@@ -170,7 +177,7 @@ class Splatviz(imgui_window.ImguiWindow):
             self.scene_origin_pos = np.zeros(3, dtype=np.float64)
 
         # ---- trajectory shared state ----
-        self.traj_gt = []  # [(x,y,z), ...] in Bullet world
+
         self.traj_pred = []  # [(x,y,z), ...]
         self.traj_viz_on = False  # toggle
         self.traj_downsample = 1
@@ -179,6 +186,13 @@ class Splatviz(imgui_window.ImguiWindow):
         self.traj_init_state = {}
         self.traj_learned_params = None
         self.traj_training_done = False
+
+        # --- (추가) fit 결과를 재생하는 데모 상태 ---
+        self.demo_traj_b = None  # numpy [T+1, N, 3] (Bullet world)
+        self.demo_step = 0  # 현재 재생 중인 스텝 인덱스
+        self.demo_bids = []  # 데모에 사용 중인 pybullet body id 들
+        self.demo_active = False  # 데모 on/off 플래그
+        self.demo_ply_paths = set()
 
         # 최근 생성된 바디 ID를 trajectory 위젯이 잡아가기 위한 훅
         self.last_spawned_bullet_id = None
@@ -190,6 +204,8 @@ class Splatviz(imgui_window.ImguiWindow):
         # ✨ 추가: 세션 카운터 & 마지막 소환의 세션
         self.spawn_session_id = 0
         self.last_spawn_session_id = -1
+
+
 
     def close(self):
         for widget in self.widgets:
@@ -392,6 +408,8 @@ class Splatviz(imgui_window.ImguiWindow):
                         sy = top + (0.5 * (1.0 - (np.dot(v, up_w) / z) / (tanY))) * draw_h
                         return (sx, sy)
 
+
+
                     def draw_polyline(points, rgba, thickness=2.0, step=1):
                         dl = getattr(imgui, "get_foreground_draw_list", imgui.get_background_draw_list)()
                         prev = None
@@ -405,12 +423,50 @@ class Splatviz(imgui_window.ImguiWindow):
                                 p2 = imgui.ImVec2(sp[0], sp[1])
                                 dl.add_line(p1, p2, _COL32(*rgba), thickness)
                             prev = sp
-                    # 파랑(0,0,255,255), 빨강(255,0,0,255)
-                    if len(self.traj_gt) > 1:
-                        draw_polyline(self.traj_gt, (0, 0, 255, 255), thickness=2.0, step=max(1, self.traj_downsample))
-                    if len(self.traj_pred) > 1:
-                        draw_polyline(self.traj_pred, (255, 0, 0, 255), thickness=2.0,
-                                      step=max(1, self.traj_downsample))
+
+                    # 팔레트 추가(파일 맨 위가 아니라, draw_frame 내부 overlay 블록 안에 둬도 됨)
+                    palette = [
+                        (0, 0, 255, 255),  # blue
+                        (255, 0, 0, 255),  # red
+                        (0, 200, 255, 255),  # cyan
+                        (255, 165, 0, 255),  # orange
+                        (128, 0, 128, 255),  # purple
+                        (34, 139, 34, 255),  # green
+                    ]
+
+                    # 멀티 GT 먼저 처리
+                    gt_multi = getattr(self, "traj_gt_multi", None)
+                    if isinstance(gt_multi, (list, tuple)) and len(gt_multi) > 0:
+                        for i, seq in enumerate(gt_multi):
+                            if len(seq) > 1:
+                                draw_polyline(seq, palette[i % len(palette)],
+                                              thickness=2.0, step=max(1, self.traj_downsample))
+                    else:
+                        # 폴백: 단일 GT (None-safety)
+                        gt = getattr(self, "traj_gt", [])
+                        if isinstance(gt, (list, tuple)) and len(gt) > 1:
+                            draw_polyline(gt, (0, 0, 255, 255),
+                                          thickness=2.0, step=max(1, self.traj_downsample))
+                        elif hasattr(gt, "__len__") and len(gt) > 1:
+                            # numpy array 등 list/tuple이 아니더라도 길이가 있으면 허용
+                            draw_polyline(gt, (0, 0, 255, 255),
+                                          thickness=2.0, step=max(1, self.traj_downsample))
+
+                    # Pred: 멀티 우선
+                    pred_multi = getattr(self, "traj_pred_multi", None)
+                    if isinstance(pred_multi, (list, tuple)) and len(pred_multi) > 0:
+                        for seq in pred_multi:
+                            if hasattr(seq, "__len__") and len(seq) > 1:
+                                draw_polyline(seq, (0, 255, 0, 255),
+                                              thickness=2.0, step=max(1, self.traj_downsample))
+                    else:
+                        pred = getattr(self, "traj_pred", [])
+                        if isinstance(pred, (list, tuple)) and len(pred) > 1:
+                            draw_polyline(pred, (255, 255, 255, 255),
+                                          thickness=2.0, step=max(1, self.traj_downsample))
+                        elif hasattr(pred, "__len__") and len(pred) > 1:
+                            draw_polyline(pred, (255, 255, 255, 255),
+                                          thickness=2.0, step=max(1, self.traj_downsample))
                     snaps = getattr(self, "traj_snapshots", [])
                     for pts, rgba in snaps:
                         # snapshot_cb는 [0..1] float RGBA를 보냄 → 0..255 정수로 변환
@@ -554,22 +610,32 @@ class Splatviz(imgui_window.ImguiWindow):
             "id": bullet_id,
             "com": com,
             "quat_I": quat_I,
-            "obj_path": obj_path,  # ← 추가 저장
-            "ply_path": abs_path,  # ← 편의 저장
+            "obj_path": obj_path,
+            "ply_path": abs_path,
         }
-        self.bullet_to_path[bullet_id] = abs_path  # ← 맵 채우기
+        self.bullet_to_path[bullet_id] = abs_path
 
         if abs_path not in self.widgets[0].plys:
             self.widgets[0].plys.append(abs_path)
+
+        # <<<< 추가: 새 ply가 들어왔을 때 transform 리스트를 미리 확장 >>>>
+        while len(self.object_transforms) < len(self.widgets[0].plys):
+            self.object_transforms.append(
+                (self.identity_quat.clone(), self.identity_trans.clone())
+            )
+        # 재구성 단계에서 초기값으로 되돌리지 않도록 prev_plys도 최신화
+        self.widgets[0].prev_plys = list(self.widgets[0].plys)
+        # <<<< 끝 >>>>
 
         self.scene_origin_quat = init_world_quat
 
         rel_pos, rel_quat = local_delta_link(
             [0, 0, 0], init_world_quat, com, quat_I,
             init_world_pos, init_world_quat)
+
         idx = self.widgets[0].plys.index(abs_path)
         self.set_transform(idx, rel_quat, rel_pos)
-        # 클릭-소환 모드일 때만 '마지막 소환' 훅을 갱신 (초기 로딩 등은 무시)
+
         if getattr(self, "awaiting_spawn_click", False):
             self.last_spawned_bullet_id = bullet_id
             self.last_spawn_session_id = self.spawn_session_id
@@ -591,6 +657,17 @@ class Splatviz(imgui_window.ImguiWindow):
             # 3) Gaussian(=ply) 제거
             if remove_ply and path and path in self.widgets[0].plys:
                 self.widgets[0].plys.remove(path)
+
+                # ---- 추가: 데모용 임시 ply였으면 디스크에서도 삭제 ----
+                if hasattr(self, "demo_ply_paths") and path in self.demo_ply_paths:
+                    self.demo_ply_paths.discard(path)
+                    try:
+                        if os.path.exists(path):
+                            os.remove(path)
+                    except Exception as e:
+                        print("[remove_dynamic_object_by_bid] demo ply remove error:", e)
+                # ---------------------------------------------------
+
             # 4) transform 리스트는 다음 프레임에 plys 기반으로 재구성되므로 별도 조치 불필요
             # 5) 최근 스폰 ID 정리
             if getattr(self, "last_spawned_bullet_id", None) == bid:
@@ -600,11 +677,20 @@ class Splatviz(imgui_window.ImguiWindow):
 
     def sync_dynamic_objects(self, scene_origin_pos, scene_origin_quat):
         """매 프레임 PyBullet→Gaussian 좌표 업데이트."""
+        # (1) fit 결과 데모가 켜져 있으면 먼저 해당 바디들의 위치를 궤적에 맞게 갱신
+        try:
+            self._update_demo_bodies()
+        except Exception as e:
+            print("[sync_dynamic_objects] demo update error:", e)
+
+        # (2) 이후에는 기존 로직대로 모든 dynamic object 를 Gaussian 쪽으로 동기화
         for path, info in self.dynamic_objects.items():
             bid, com, quat_I = info["id"], info["com"], info["quat_I"]
             pos_w, quat_w = p.getBasePositionAndOrientation(bid)
-            rel_pos, rel_quat = local_delta_link(scene_origin_pos, scene_origin_quat,
-                                                 com, quat_I, pos_w, quat_w)
+            rel_pos, rel_quat = local_delta_link(
+                scene_origin_pos, scene_origin_quat,
+                com, quat_I, pos_w, quat_w
+            )
             if path in self.widgets[0].plys:
                 idx = self.widgets[0].plys.index(path)
                 self.set_transform(idx, rel_quat, rel_pos)
@@ -620,3 +706,182 @@ class Splatviz(imgui_window.ImguiWindow):
                     cam_widget.set_external_camera_pose(matrix)
                 # OFF면 적용 건너뜀
                 break
+
+    def start_traj_demo_from_predicted(self, traj_pred_b, obj_paths, ply_path):
+        """
+        trajectory 위젯에서 넘어온 예측 궤적(traj_pred_b)을 기준으로
+        포켓볼 오브젝트들을 생성하고, 이후 프레임마다 해당 궤적을 따라가도록 하는 데모를 시작한다.
+
+        traj_pred_b : [T+1, N, 3] (Bullet world 좌표)
+        obj_paths   : 길이 N 의 OBJ 경로 리스트
+        ply_path    : 모든 공에 사용할 Gaussian .ply 경로 (예: FIXED_PLY_PATH)
+        """
+        import numpy as np
+
+        traj = np.asarray(traj_pred_b, dtype=np.float64)
+        if traj.ndim != 3 or traj.shape[2] != 3:
+            print("[demo] invalid traj shape:", traj.shape)
+            return
+
+        T, N, _ = traj.shape
+        if N == 0:
+            print("[demo] empty trajectory (no objects).")
+            return
+        print("[demo] traj shape:", traj.shape)  # (T+1, 2, 3) 인지 확인
+        print("[demo] first step:", traj[0])
+
+        # -------- 0) 베이스 PLY 경로 확인 --------
+        base_ply = os.path.abspath(ply_path) if ply_path is not None else None
+        if base_ply is None or (not os.path.exists(base_ply)):
+            print(f"[demo] invalid ply_path for demo: {ply_path}")
+            return
+
+        # -------- 1) 이전 데모 정리 --------
+        #  - 기존 데모에서 사용하던 Bullet 바디/ply를 제거
+        if getattr(self, "demo_active", False) and self.demo_bids:
+            for bid in list(self.demo_bids):
+                try:
+                    self.remove_dynamic_object_by_bid(bid, remove_ply=True)
+                except Exception:
+                    pass
+
+        #  - 이전 데모용 ply 파일이 남아있다면 디스크에서 삭제
+        if not hasattr(self, "demo_ply_paths"):
+            self.demo_ply_paths = set()
+        else:
+            for old_ply in list(self.demo_ply_paths):
+                try:
+                    if os.path.exists(old_ply):
+                        os.remove(old_ply)
+                except Exception as e:
+                    print("[demo] failed to remove old demo ply:", old_ply, e)
+            self.demo_ply_paths.clear()
+
+        # -------- 2) 새 데모 상태 초기화 --------
+        self.demo_traj_b = traj
+        self.demo_step = 0
+        self.demo_bids = []
+        self.demo_active = True
+
+        # scene_origin_quat 이 없으면 기본값 보정
+        if not hasattr(self, "scene_origin_quat"):
+            self.scene_origin_quat = p.getQuaternionFromEuler(
+                [math.radians(self.rotation), 0, 0]
+            )
+
+        # -------- 3) 각 물체마다:
+        #  - Bullet body 생성
+        #  - base_ply 복사본(서로 다른 파일 경로)을 만들어 register_dynamic_object 에 사용
+        # --------------------------------------------
+        for i in range(N):
+            pos0 = traj[0, i, :]  # [3]
+            if i < len(obj_paths):
+                obj_path_i = obj_paths[i]
+            else:
+                obj_path_i = obj_paths[-1]
+
+            # 3-1) 데모용 ply 복사본 경로 생성
+            dir_name, fname = os.path.split(base_ply)
+            name, ext = os.path.splitext(fname)
+            demo_ply_i = None
+
+            # "_demo{i}_k" 꼴의 파일명으로 아직 없는 경로를 찾는다
+            for k in range(1000):
+                candidate = os.path.join(dir_name, f"{name}_demo{i}_{k}{ext}")
+                if (candidate not in self.widgets[0].plys) and (not os.path.exists(candidate)):
+                    try:
+                        shutil.copyfile(base_ply, candidate)
+                        demo_ply_i = candidate
+                        self.demo_ply_paths.add(candidate)
+                    except Exception as e:
+                        print("[demo] failed to copy ply for object", i, ":", e)
+                        demo_ply_i = base_ply  # 복사가 실패하면 그냥 베이스 경로 재사용(최후 폴백)
+                    break
+
+            if demo_ply_i is None:
+                # 1000번 시도해도 못 찾으면 그냥 베이스 경로 사용(아주 예외적인 경우)
+                demo_ply_i = base_ply
+
+            try:
+                # 3-2) Bullet world 에 콜라이더/바디 생성
+                bid, com, quat_I = create_physics_object_from_mesh(
+                    obj_path_i,
+                    self.scene_origin_quat,
+                    pos0
+                )
+
+                # 3-3) Gaussian renderer 쪽에 dynamic object 등록
+                self.register_dynamic_object(
+                    demo_ply_i,
+                    bid,
+                    com,
+                    quat_I,
+                    init_world_pos=pos0,
+                    init_world_quat=self.scene_origin_quat,
+                    obj_path=obj_path_i,
+                )
+
+                self.demo_bids.append(bid)
+                print(f"[demo] spawned body {bid} for object {i} at {pos0}")
+
+            except Exception as e:
+                print("[demo] spawn error for object", i, ":", e)
+
+        if not self.demo_bids:
+            # 전부 실패하면 데모 off
+            self.demo_traj_b = None
+            self.demo_active = False
+            print("[demo] no Bullet bodies spawned; demo disabled.")
+
+    def _update_demo_bodies(self):
+        """
+        demo_traj_b 가 설정되어 있으면, 현재 demo_step 에 해당하는 위치로
+        데모용 Bullet 바디들을 움직인다.
+        (p.resetBasePositionAndOrientation 사용 → sandbox에서 얻은 궤적을 그대로 재생)
+        """
+        if not getattr(self, "demo_active", False):
+            return
+
+        if self.demo_traj_b is None or len(self.demo_bids) == 0:
+            self.demo_active = False
+            return
+
+        T, N, _ = self.demo_traj_b.shape
+        if self.demo_step >= T:
+            # 재생이 끝났으면 바디/ply 제거 후 종료
+            for bid in list(self.demo_bids):
+                try:
+                    self.remove_dynamic_object_by_bid(bid, remove_ply=True)
+                except Exception:
+                    pass
+            self.demo_bids = []
+            self.demo_traj_b = None
+            self.demo_active = False
+            print("[demo] finished; bodies removed.")
+            return
+
+        step = self.demo_step
+        #print(f"[demo] step {self.demo_step}/{T}, pos[0]={self.demo_traj_b[self.demo_step, 0, :]}, pos[1]={self.demo_traj_b[self.demo_step, 1, :]}")
+
+        for i, bid in enumerate(self.demo_bids):
+            if i >= N:
+                continue
+            pos = self.demo_traj_b[step, i, :]  # 현재 스텝에서 물체 i 의 위치 [3]
+
+            try:
+                # 현재 바디 orientation 유지 (구체라 크게 중요하진 않음)
+                _, quat = p.getBasePositionAndOrientation(bid)
+            except Exception:
+                quat = self.scene_origin_quat
+
+            try:
+                p.resetBasePositionAndOrientation(
+                    bid,
+                    pos.tolist(),
+                    quat
+                )
+            except Exception as e:
+                print(f"[demo] reset error (bid={bid}, step={step}):", e)
+
+        # 다음 프레임에는 다음 스텝 재생
+        self.demo_step += 1

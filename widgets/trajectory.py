@@ -1,464 +1,482 @@
-# widgets/trajectory.py
 # -*- coding: utf-8 -*-
-"""
-Trajectory recording & visualization ONLY (copy와 동일한 흐름)
-- 클릭 기반 소환 → spawn 감지 → Bullet에서 프레임 단위 샘플 → Gaussian 좌표로 변환하여 viz.traj_gt에 저장
-- 녹화 종료 시 Bullet 바디와 Gaussian(.ply) 모두 정리
-- 오버레이(시각화)는 splatviz가 viz.traj_gt를 읽어 화면에 그림
-"""
-import time
+import os
+import json
 import numpy as np
 import pybullet as p
 from scipy.spatial.transform import Rotation as R
 from imgui_bundle import imgui
-from splatviz_utils.gui_utils import imgui_utils as I  # 프로젝트 표준 버튼/헬퍼만 사용
-import os
-try:
-    import widgets.nimble_obj_fit as nimfit   # ✅ 모듈 전체 임포트
-except Exception:
-    import nimble_obj_fit as nimfit
-from typing import Optional
-from tkinter import Tk, filedialog
+from splatviz_utils.gui_utils import imgui_utils as I
+from sandbox_bulletorig import fit_two_stage_from_current_world
+from pathlib import Path
+from tkinter import filedialog
+# sandbox 백엔드: 구체 기반 시뮬 유틸(피팅 없이 GT만 사용)
+import sandbox_bullet as sb
+import json
+
+# 고정 오브젝트/PLY 경로 (원 코드와 동일)
+FIXED_OBJ_PATH = os.path.join("objects", "pokeball", "obj_vhacd.obj")
+FIXED_PLY_PATH = os.path.join("objects", "pokeball", "point_cloud.ply")  # (viz에서 필요할 때만)
+
 # -----------------------------
-# 좌표계 유틸 (copy와 동일한 규약: XYZW)
-# gaussian = R^T (bullet - p)
+# 좌표 변환 유틸 (Gaussian <-> Bullet)
 # -----------------------------
-def _to_gaussian_pts(scene_quat_xyzw, scene_pos, pts_bullet):
-    Rb = R.from_quat(np.asarray(scene_quat_xyzw, np.float64))  # (x,y,z,w)
-    P  = np.asarray(pts_bullet, np.float64)
-    t  = np.asarray(scene_pos,    np.float64)
-    return Rb.inv().apply(P - t)
+def _to_bullet_pts(scene_quat_xyzw, scene_pos_xyz, pts_g):
+    """Gaussian 좌표 pts_g[N,3] -> Bullet(Z-up) 좌표 pts_b[N,3]"""
+    P = np.asarray(pts_g, np.float64).reshape(-1, 3)
+    q = np.asarray(scene_quat_xyzw, np.float64)  # (x,y,z,w)
+    t = np.asarray(scene_pos_xyz,   np.float64)  # (3,)
+    Rb = R.from_quat(q)
+    Pb = Rb.apply(P) + t
+    return Pb
 
-def _to_bullet_pts(scene_quat_xyzw, scene_pos, pts_gaussian):
-    Rb = R.from_quat(np.asarray(scene_quat_xyzw, np.float64))  # (x,y,z,w)
-    P  = np.asarray(pts_gaussian, np.float64)
-    t  = np.asarray(scene_pos,     np.float64)
-    return Rb.apply(P) + t
+def _to_gaussian_pts(scene_quat_xyzw, scene_pos_xyz, pts_b):
+    """Bullet 좌표 pts_b[N,3] -> Gaussian 좌표 pts_g[N,3]"""
+    P = np.asarray(pts_b, np.float64).reshape(-1, 3)
+    q = np.asarray(scene_quat_xyzw, np.float64)
+    t = np.asarray(scene_pos_xyz,   np.float64)
+    Rb = R.from_quat(q)
+    Pg = Rb.apply(P - t, inverse=True)
+    return Pg
 
-def _find_scene_obj_recursive(scene_path: str) -> Optional[str]:
-    """scene_path(.ply) 주변에서 collision/scene/mesh 관련 .obj를 찾는다.
-    - 현재 디렉터리 → 하위 재귀 → 상위 3단계까지 거슬러 올라가며 재귀 탐색
-    """
-    if not scene_path:
-        return None
-    start = os.path.abspath(os.path.dirname(scene_path))
-    prefer = ("collision", "scene", "tsdf_fusion", "mesh", "vis")
 
-    def scan_dir(root: str) -> Optional[str]:
-        best, best_score = None, -1
-        for r, _dirs, files in os.walk(root):
-            for fn in files:
-                if not fn.lower().endswith(".obj"):
-                    continue
-                score = 0
-                low = fn.lower()
-                for k in prefer:
-                    if k in low:
-                        score += 2
-                # 루트와의 거리 짧을수록 가점
-                rel = os.path.relpath(r, root)
-                dist = 0 if rel == "." else len(rel.split(os.sep))
-                score += max(0, 5 - dist)
-                if score > best_score:
-                    best_score = score
-                    best = os.path.join(r, fn)
-        return best
-
-    # 1) 현재 폴더/하위
-    cand = scan_dir(start)
-    if cand:
-        return cand
-    # 2) 상위 폴더로 최대 3단계 상승하며 재귀 탐색
-    up = start
-    for _ in range(3):
-        up = os.path.dirname(up)
-        if not up or up == "/" or up == start:
-            break
-        cand = scan_dir(up)
-        if cand:
-            return cand
-    return None
-
+# -----------------------------
+# Trajectory Widget (GT만)
+# -----------------------------
 class TrajectoryWidget:
-    def __init__(self, viz):
+    """
+    - GT(구체) 생성
+    - GT 저장/로드
+    - Gaussian 좌표로 오버레이
+    (SPSA/피팅 관련 기능 전부 제거)
+    """
+    def __init__(self, viz, jsonfile):
         self.viz = viz
         self.name = "Trajectory"
 
-        # UI
-        self.downsample  = 1      # 프레임 단위 다운샘플(오버레이 표시 간격)
-        self.length_sec  = 5.0    # 녹화 길이(초)
+        # UI 토글
+        self.show_overlay = True
+        self.jsonfile = jsonfile
 
-        # 상태
-        self._await_click_spawn = False
-        self._tracked_bid  = None
-        self._start_time   = 0.0
-        self._frame_count  = 0
-        self._recording_gt = False
+        # 초기 파라미터(가우시안 좌표)
+        self.start0_g = np.array([0.0, 0.0, 0.0], np.float32)
+        self.start1_g = np.array([0.0, 0.0, 0.0], np.float32)
+        if jsonfile is not None:
+            self._on_load_gt_npy(self.jsonfile["gt_traj"])
 
-        # splatviz가 기대하는 필드들만 (없을 때에만) 초기화
-        defaults = [
-            ("traj_gt", []),
-            ("traj_pred", []),
-            ("traj_viz_on", True),
-            ("traj_downsample", 1),
-            ("traj_length", float(self.length_sec)),
-            ("traj_recording", False),
-            # scene_origin_* 는 splatviz가 이미 설정하므로 여기서 새로 지정/덮어쓰지 않음
-        ]
-        for k, v in defaults:
-            if not hasattr(self.viz, k):
-                setattr(self.viz, k, v)
+        # 초기 속도 (Bullet 좌표 기준으로 입력한다고 가정)
+        self.v0_0 = np.array([0.0, 0.0, 0.0], np.float32)
+        self.v0_1 = np.array([0.0, 0.0, 0.0], np.float32)
 
-        # --- nimble 학습 관련 상태 ---
-        self._training = False
-        self.train_iters = 150  # 원하는 값으로 UI에서 바꿀 예정
-        self.snap_every = 15  # n-iteration마다 스냅샷
-        self._last_obj_path = None  # 방금 녹화한 OBJ 경로 기억
-        self._last_init_quat = (0, 0, 0, 1)
+        # GT 물성
+        self.gt_mass0 = 1.2
+        self.gt_mass1 = 2.4
+        self.gt_mu    = 0.25
+        self.gt_e     = 0.25
 
-        self.gt_rotx_deg = 0.0  # 사용자가 입력할 로테이션(deg, x축)
-        self.gt_rotx_override = False  # 체크 시, 파일 메타/현 viz 회전 대신 이 값 사용
+        # 시뮬 길이/물리 파라미터
+        self.length_sec = 1.5
+        self.mu_roll = 0.02
+        self.mu_spin = 0.01
 
-    @I.scoped_by_object_id
-    def __call__(self, expanded):
-        if not expanded:
-            return
+        # 최근 I/O 경로/상태
+        self.last_gt_path = None
+        self.last_save_dir = None
 
-        # --- 최소 UI (copy 풍) ---
-        imgui.text("Record seconds:")
-        ch, val = imgui.input_float("##traj_secs", float(self.length_sec), 0.1, 1.0, "%.2f")
-        if ch:
-            self.length_sec = max(0.1, float(val))
-            self.viz.traj_length = float(self.length_sec)
+        # GT에서 실제 썼던 Bullet-world 시작좌표(옵션)
+        self._last_sim_starts_b = None
 
-        imgui.text("Overlay downsample (frames):")
-        ch, v = imgui.input_int("##traj_down", int(self.downsample), 1, 5)
-        if ch:
-            self.downsample = max(1, int(v))
-            self.viz.traj_downsample = self.downsample
+        # 디버그 토글
+        self.debug_gt = False
 
-        imgui.separator()
-        _, self.viz.traj_viz_on = imgui.checkbox("Show Trajectory Overlay", bool(self.viz.traj_viz_on))
-        imgui.same_line()
-        if I.button("Clear", width=120):
-            self.viz.traj_gt = []
-            self.viz.traj_pred = []
-            if hasattr(self.viz, "traj_snapshots"):
-                self.viz.traj_snapshots = []
+        # --- Fit 하이퍼파라미터 (GUI에서 입력받을 값) ---
+        self.fit_iters1 = 0
+        self.fit_fast_seconds1 = 0.10
+        self.fit_stride1 = 1
 
-        imgui.separator()
+        self.fit_iters2 = 8
+        self.fit_fast_seconds2 = self.length_sec  # None으로 두고 전체 seconds 써도 됨
+        self.fit_stride2 = 1
+        self.fit_post_tail = 0.5  # loss tail 가중 길이(원본과 동일 의미)
+        if self.jsonfile is not None:
+            self.fit_iters2 = self.jsonfile["fit_params"]["fit_iters"]
+            self.fit_stride2 = self.jsonfile["fit_params"]["fit_stride"]
+            self.fit_post_tail = self.jsonfile["fit_params"]["post_tail"]
 
-        # (TrajectoryWidget.__call__ 내부, Clear 버튼 아래쪽에 추가)
-        if I.button("Load GT (.npy)", width=180, enabled=not self._recording_gt):
-            try:
-                # Tk 파일 다이얼로그(화면 깜빡임 방지)
-                _tk = Tk();
-                _tk.withdraw()
-                npy_path = filedialog.askopenfilename(
-                    title="Pick GT trajectory .npy",
-                    filetypes=[("NumPy array", "*.npy"), ("All files", "*.*")]
-                )
-                _tk.update();
-                _tk.destroy()
-                if npy_path:
-                    self._load_gt_npy(npy_path)
-            except Exception as e:
-                print("[traj] load GT npy failed:", e)
+        self.duration = 0
+        self.loss = 0
+        self.mu = 0
+        self.e = 0
+        self.massratio = 0
 
-        changed, val = imgui.input_float("GT rotx (deg)", float(self.gt_rotx_deg), 1.0, 5.0, "%.1f")
-        if changed:
-            self.gt_rotx_deg = float(val)
+        self.scene_mesh = str(Path(self.viz.scene_path).with_name("tsdf_fusion_post_vis.obj"))
 
-        clicked, checked = imgui.checkbox("Override rotation on load", bool(self.gt_rotx_override))
-        if clicked:
-            self.gt_rotx_override = bool(checked)
+    # -----------------------------
+    # 내부 헬퍼: scene/좌표설정 얻기
+    # -----------------------------
+    def _get_scene_pose(self):
+        # splatviz가 유지하는 scene pose
+        scene_q = getattr(self.viz, "scene_origin_quat", [0,0,0,1])  # (x,y,z,w)
+        scene_p = getattr(self.viz, "scene_origin_pos",  [0,0,0])
+        return scene_q, scene_p
 
-        if I.button("Choose & Load", width=180, enabled=not self._recording_gt):
-            try:
-                from tkinter import Tk, filedialog
-                _tk = Tk();
-                _tk.withdraw()
-                npy_path = filedialog.askopenfilename(
-                    title="Pick GT trajectory .npy",
-                    filetypes=[("NumPy array", "*.npy"), ("All files", "*.*")]
-                )
-                _tk.update();
-                _tk.destroy()
-                if npy_path:
-                    self._load_gt_npy(npy_path,
-                                      rotx_override_deg=(self.gt_rotx_deg if self.gt_rotx_override else None))
-            except Exception as e:
-                print("[traj] load GT npy failed:", e)
+    def _get_sim_params(self):
+        dt = float(getattr(self.viz, "traj_dt", 0.01))
+        substeps = int(getattr(self.viz, "PHYS_STEPS_PER_FRAME", 8))
+        seconds  = float(self.length_sec)
+        scene_rotx_deg = float(getattr(self.viz, "rotation", 0.0))
+        gravity = (0, 0, -9.8)
+        return dt, substeps, seconds, scene_rotx_deg, gravity
 
-        imgui.separator()
+    def _resolve_objects_from_load_widget(self):
+        """
+        무조건 고정 경로의 두 OBJ를 사용한다.
+        - 둘 다 동일한 obj_vhacd.obj (두 개 물체)
+        - (참고) PLY 경로는 viz에서 필요 시 self.viz에 넘겨 쓰기만 한다.
+        """
+        obj0 = FIXED_OBJ_PATH
+        obj1 = FIXED_OBJ_PATH
 
-        # 원본처럼: Load 위젯의 click-to-place를 그대로 사용
-        if I.button("Create Trajectory", width=getattr(self.viz, "button_w", 480), enabled=not self._recording_gt):
-            # Load 위젯이 준비한 (PLY, OBJ) 페어를 등록 (없으면 None을 두고도 arming은 가능)
-            loadw = self.viz.widgets[0] if getattr(self.viz, "widgets", None) else None
-            prep  = getattr(loadw, "prepare_object_files_for_insertion", None) if loadw else None
-            if callable(prep):
-                try:
-                    file_path, obj_path = prep()
-                    if file_path and obj_path:
-                        self.viz.pending_spawn_files = (file_path, obj_path)
-                except Exception:
-                    pass
-            # 클릭-소환 arming: 실제 스폰은 splatviz가 하고, 여기서는 id 감지만 한다
-            self.viz.awaiting_spawn_click = True
-            self._await_click_spawn = True
-            self.viz.traj_viz_on = True
-            self.viz.traj_gt.clear(); self.viz.traj_pred.clear()
-            self._tracked_bid = None
-            self._start_time = 0.0
-            self._frame_count = 0
+        ok = True
+        for pth in (obj0, obj1):
+            if not isinstance(pth, str) or not os.path.exists(pth):
+                ok = False
+                break
+        if not ok:
+            print(f"[two-body-gt] fixed object path missing. expected: {FIXED_OBJ_PATH}")
+            return False
 
-            # ✨ 추가: 새 세션 번호 발급(증가)하고, 이번 아밍이 기다릴 세션을 저장
-            self.viz.spawn_session_id += 1
-            self._await_session = self.viz.spawn_session_id
+        self._last_obj_path0 = obj0
+        self._last_obj_path1 = obj1
 
-            print("[traj] click the viewport to place the object.")
-
-        # 상태 표시
-        if self._recording_gt:
-            imgui.same_line()
-            imgui.text("Recording GT...")
-
-        imgui.separator()
-        imgui.text("Nimble parameter fit")
-        ch, itv = imgui.input_int("iters", int(self.train_iters), 5, 25)
-        if ch: self.train_iters = max(1, int(itv))
-        ch, sev = imgui.input_int("snapshot every", int(self.snap_every), 1, 10)
-        if ch: self.snap_every = max(1, int(sev))
-
-        enabled_train = (not self._recording_gt) and (not self._training) and (len(self.viz.traj_gt) >= 4) and (
-                    self._last_obj_path is not None)
-        if I.button("Train (nimble)", width=200, enabled=enabled_train):
-            import threading
-            threading.Thread(target=self._train_nimble_worker, daemon=True).start()
-
-        # --- 원본처럼: 프레임 업데이트에서만 진행 ---
-        # 1) 클릭-소환 감지 → 녹화 시작  (세션 매칭 추가)
-        if self._await_click_spawn:
-            bid = getattr(self.viz, "last_spawned_bullet_id", None)
-            sess = getattr(self.viz, "last_spawn_session_id", -2)
-            aw = getattr(self, "_await_session", -1)
-            if bid is not None and sess == aw:
-                # 이번 Create Trajectory에서 소환된 것이 맞다 → 녹화 시작
-                self._await_click_spawn = False
-                self.viz.last_spawned_bullet_id = None  # 다음 감지를 위해 비움
-                self._start_gt_recording(int(bid))
-
-        # 2) 녹화 중이면 프레임마다 샘플링 (다운샘플 반영)
-        if self._recording_gt and self._tracked_bid is not None:
-            elapsed = time.time() - self._start_time
-            if elapsed >= float(self.viz.traj_length):
-                self._stop_gt_recording()
-            else:
-                self._maybe_sample_current(self._tracked_bid, self.viz.traj_gt)
-
-    # ---------- GT 녹화 ----------
-    def _start_gt_recording(self, bid: int):
-        """스폰된 바디(bid)를 프레임 단위로 샘플링하여 Gaussian 좌표의 GT 궤적을 남긴다."""
-        self._tracked_bid = int(bid)
-
-        # 초기 상태 저장(원본과 동일 필드; 이후 nimble 통합 시 사용 가능)
+        # (선택) 다른 위젯/스패너가 참조할 수 있도록 PLY도 알려준다.
         try:
-            pos, orn = p.getBasePositionAndOrientation(self._tracked_bid)
-            lin, ang = p.getBaseVelocity(self._tracked_bid)
-        except Exception:
-            pos, orn, lin, ang = (0,0,0), (0,0,0,1), (0,0,0), (0,0,0)
-        self.viz.traj_init_state = dict(pos=pos, orn=orn, lin=lin, ang=ang)
-
-        # --- [추가] 방금 소환한 동적체의 OBJ 경로 기억 ---
-        self._last_obj_path = None
-        try:
-            dyn_map = getattr(self.viz, "dynamic_objects", {})
-            for ply_path, inf in dyn_map.items():
-                if inf.get("id") == self._tracked_bid:
-                    self._last_obj_path = inf.get("obj_path", None)  # load_ply가 넣어둔 필드 이름
-                    break
+            if hasattr(self.viz, "last_gaussian_ply"):
+                setattr(self.viz, "last_gaussian_ply", FIXED_PLY_PATH if os.path.exists(FIXED_PLY_PATH) else None)
         except Exception:
             pass
 
-        self._last_init_quat = tuple(orn)  # nimble urdf rpy 변환에 사용
+        return True
 
-        # 공유 버퍼/상태
-        self.viz.traj_gt.clear()
-        self._start_time = time.time()
-        self._frame_count = 0
-        self._recording_gt = True
-        self.viz.traj_recording = True
-        self.viz.traj_viz_on = True
-        # downsample/length는 UI 반영 값이 이미 self.viz에 들어가 있음
-
-        try:
-            self.viz.traj_dt = float(p.getPhysicsEngineParameters().get("fixedTimeStep", 0.004))
-        except Exception:
-            self.viz.traj_dt = float(self.viz.traj_length) / max(1, (len(self.viz.traj_gt) - 1))
-
-    def _maybe_sample_current(self, bid: int, store_list: list):
-        """현재 Bullet 바디 위치를 sample하여 Gaussian 좌표로 누적."""
-        self._frame_count += 1
-        if (self._frame_count % int(max(1, self.viz.traj_downsample))) != 0:
+    # -----------------------------
+    # UI 본체
+    # -----------------------------
+    @I.scoped_by_object_id
+    def __call__(self, expanded: bool):
+        expanded, _ = I.collapsing_header("Trajectory", default=True)
+        if not expanded:
             return
 
-        try:
-            pos_b, _ = p.getBasePositionAndOrientation(bid)
-        except Exception:
-            self._stop_gt_recording()
-            return
+        changed, val = imgui.checkbox("Show Trajectory Overlay##traj_overlay", bool(self.show_overlay))
+        if changed:
+            self.show_overlay = bool(val)
+        imgui.separator()
 
-        # scene_origin_* 는 splatviz가 유지하므로 그대로 사용 (절대 덮어쓰지 않음)
-        scene_p = getattr(self.viz, "scene_origin_pos",  [0,0,0])
-        scene_q = getattr(self.viz, "scene_origin_quat", [0,0,0,1])  # XYZW
-        pt_g = _to_gaussian_pts(scene_q, scene_p, np.asarray([pos_b], np.float64))[0]
-        store_list.append(pt_g.tolist())
-        print(f"[traj] sample #{len(store_list)}  pt={pt_g.tolist()[:3]}")
+        # ----- 시작/속도/GT 파라미터 편집
+        self._vec3("start0 (gauss)##traj_s0", "start0_g", (0.0, 0.0, 0.0))
+        self._vec3("start1 (gauss)##traj_s1", "start1_g", (0.0, 0.0, 0.0))
 
-    def _stop_gt_recording(self):
-        self._recording_gt = False
-        self.viz.traj_recording = False
-        # 원본처럼: 녹화가 끝나면 동적 바디와 대응 PLY를 정리
-        try:
-            if self._tracked_bid is not None and hasattr(self.viz, "remove_dynamic_object_by_bid"):
-                self.viz.remove_dynamic_object_by_bid(self._tracked_bid, remove_ply=True)
-        except Exception as e:
-            print("[trajectory] remove GT object error:", e)
-        self._tracked_bid = None
+        self._vec3("v0[0]##traj_v00", "v0_0", (0.0, 0.0, 0.0))
+        self._vec3("v0[1]##traj_v01", "v0_1", (0.0, 0.0, 0.0))
 
-    def _load_gt_npy(self, path: str, rotx_override_deg: float | None = None):
-        import numpy as np
-        from scipy.spatial.transform import Rotation as R
+        _, self.gt_mass0 = imgui.input_float("gt mass0##traj_m0", float(self.gt_mass0), 0.05, 0.1)
+        _, self.gt_mass1 = imgui.input_float("gt mass1##traj_m1", float(self.gt_mass1), 0.05, 0.1)
+        _, self.gt_mu    = imgui.input_float("gt mu##traj_mu",    float(self.gt_mu),    0.02, 0.05)
+        _, self.gt_e     = imgui.input_float("gt e##traj_e",      float(self.gt_e),     0.02, 0.05)
 
-        arr = np.load(path, allow_pickle=True)
-        meta = {}
+        _, self.length_sec = imgui.input_float("seconds##traj_sec", float(self.length_sec), 0.1, 0.25)
 
-        # --- 다양한 저장 포맷 허용: dict/npz/ndarray ---
-        if isinstance(arr, np.lib.npyio.NpzFile):
-            if "traj" in arr:
-                data = arr["traj"]
-            elif "gt_traj" in arr:
-                data = arr["gt_traj"]
-            elif "pos" in arr:
-                data = arr["pos"]
-            else:
-                data = list(arr.values())[0]
-            for k in ("dt", "h", "stride", "t0", "t1",
-                      "scene_origin_pos", "scene_origin_quat_xyzw", "scene_rotx_deg", "origin"):
-                if k in arr: meta[k] = arr[k]
-        elif isinstance(arr, np.ndarray):
-            data = arr
+        imgui.text(f"Estimated massratio: {self.massratio:.3f}, Mu: {self.mu:.3f}, E: {self.e:.3f}")
+
+        imgui.separator()
+
+        # ----- 파일 I/O 버튼 -----
+        if imgui.button("Load GT (.npy)##traj_load", imgui.ImVec2(160, 0)):
+            self._on_load_gt_npy(None)
+        imgui.same_line()
+        if imgui.button("Save GT (.npy)##traj_save", imgui.ImVec2(160, 0)):
+            self._on_save_gt_npy()
+
+        # ----- GT 생성 버튼 -----
+        debug_changed, debug_val = imgui.checkbox("Debug GT sim (print inputs/first positions)##traj_dbg_gt",
+                                                  bool(getattr(self, "debug_gt", False)))
+        if debug_changed:
+            self.debug_gt = bool(debug_val)
+
+        if imgui.button("Create Trajectory (GT simulate)##traj_create", imgui.ImVec2(330, 0)):
+            try:
+                self._do_simulate_gt()
+            except Exception as e:
+                print(f"[two-body-gt] error: {e}")
+
+        imgui.separator()
+
+        # ----- 오버레이 on/off 상태 반영
+        self.viz.traj_viz_on = bool(self.show_overlay)
+
+        # ----- Clear
+        if imgui.button("Clear (GT)##traj_clear", imgui.ImVec2(330, 0)):
+            self._clear_all_trajs_and_caches()
+
+        # ====== 2-Stage Fit 파라미터 입력 ======
+        imgui.separator()
+        imgui.text("2-Stage SPSA Fitting")
+
+        changed, v = imgui.input_int("fit iters 1##fit_i1", int(self.fit_iters1))
+        if changed: self.fit_iters1 = max(0, int(v))
+        changed, v = imgui.input_float("fit fast seconds 1##fit_fs1", float(self.fit_fast_seconds1), 0.01, 0.1)
+        if changed: self.fit_fast_seconds1 = max(0.0, float(v))
+        changed, v = imgui.input_int("fit stride 1##fit_s1", int(self.fit_stride1))
+        if changed: self.fit_stride1 = max(1, int(v))
+
+        changed, v = imgui.input_int("fit iters 2##fit_i2", int(self.fit_iters2))
+        if changed: self.fit_iters2 = max(0, int(v))
+        changed, v = imgui.input_int("fit stride 2##fit_s2", int(self.fit_stride2))
+        if changed: self.fit_stride2 = max(1, int(v))
+
+        changed, v = imgui.input_float("fit post tail##fit_tail", float(self.fit_post_tail), 0.1, 0.25)
+        if changed: self.fit_post_tail = max(0.0, float(v))
+
+        if imgui.button("Train (2-stage SPSA)##traj_train", imgui.ImVec2(330, 0)):
+            try:
+                self._on_train_two_stage()
+            except Exception as e:
+                print(f"[fit] error: {e}")
+
+        imgui.text(f"Loss: {self.loss:.3f}, Time: {self.duration:.3f}")
+
+    # -----------------------------
+    # 벡터 입력 helper
+    # -----------------------------
+    def _vec3(self, label, attr, default):
+        v = getattr(self, attr, np.array(default, np.float32))
+        ch, vv = imgui.input_float3(label, list(map(float, v)))
+        if ch:
+            setattr(self, attr, np.array(vv, np.float32))
+
+    # -----------------------------
+    # 파일 로드/세이브
+    # -----------------------------
+    def _on_load_gt_npy(self, file_path):
+        if file_path is None:
+            path = filedialog.askopenfilename()
         else:
-            d = arr.item()  # dict
-            data = d.get("traj", d.get("gt_traj", d.get("pos", None)))
-            if data is None:
-                raise RuntimeError("Unsupported dict fields in npy")
-            for k in ("dt", "h", "stride", "t0", "t1",
-                      "scene_origin_pos", "scene_origin_quat_xyzw", "scene_rotx_deg", "origin"):
-                if k in d: meta[k] = d[k]
-
-        data = np.asarray(data, np.float64)
-
-        # (T,3) 또는 (T,N,3) → 우선 0번만 사용 (멀티 오버레이는 이후 확장)
-        if data.ndim == 3:
-            data = data[:, 0, :]
-        assert data.ndim == 2 and data.shape[1] == 3, f"GT traj must be (T,3) or (T,N,3), got {data.shape}"
-
-        # --- 씬 포즈 결정: meta → viz → override 순 ---
-        # meta가 numpy 배열일 수 있으므로 np.asarray 처리
-        scene_q_viz = np.asarray(getattr(self.viz, "scene_origin_quat", [0, 0, 0, 1]), np.float64)
-        scene_p_viz = np.asarray(getattr(self.viz, "scene_origin_pos", [0, 0, 0]), np.float64)
-
-        scene_q = scene_q_viz
-        scene_p = scene_p_viz
-
-        if "scene_origin_quat_xyzw" in meta:
-            q = np.asarray(meta["scene_origin_quat_xyzw"], np.float64).reshape(4, )
-            scene_q = q
-        if "scene_origin_pos" in meta:
-            p = np.asarray(meta["scene_origin_pos"], np.float64).reshape(3, )
-            scene_p = p
-
-        # 사용자가 오버라이드 체크했으면: viz/meta 무시하고 x-축 회전deg로 세팅
-        if rotx_override_deg is not None:
-            Rx = R.from_euler("x", float(rotx_override_deg), degrees=True)
-            scene_q = Rx.as_quat()  # (x,y,z,w)
-
-        # Bullet → Gaussian 변환
-        Rb = R.from_quat(scene_q)  # scene(Gaussian→Bullet)
-        pts_g = Rb.inv().apply(data - scene_p)
-
-        # --- (선택) COM/BASE 기준 보정: origin 메타가 'com'이면 여기서 처리 가능 ---
-        # * 권장: GT는 항상 'base'로 저장. 'com'일 경우 per-frame orn이 없으면 정확 복원 불가.
-        # if meta.get("origin","base") == "com":
-        #     print("[traj] GT is COM-based; per-frame orientation required to convert to base correctly.")
-
-        # viz 상태 갱신
-        self.viz.traj_gt = [tuple(p) for p in pts_g.tolist()]
-        self.viz.traj_viz_on = True
-        if "dt" in meta:
-            self.viz.traj_dt = float(meta["dt"])
-        elif "h" in meta:
-            self.viz.traj_dt = float(meta["h"])
-
-        print(f"[traj] loaded GT: {len(self.viz.traj_gt)} points from '{path}' "
-              f"(rotx_override={rotx_override_deg}, meta_rotx={float(meta.get('scene_rotx_deg', np.nan)) if 'scene_rotx_deg' in meta else None})")
-
-    def _train_nimble_worker(self):
-        if self._training:
+            path = Path(file_path)
+        if not path:
             return
-        self._training = True
         try:
-            # 안전 체크
-            if self._last_obj_path is None or len(self.viz.traj_gt) < 4:
-                print("[nimble] need GT and obj_path")
-                return
-
-            dt = float(getattr(self.viz, "traj_dt", 0.004))
-
-            traj_g = np.asarray(self.viz.traj_gt, dtype=np.float32)
-
-            # 1) Gaussian→Bullet
-            scene_q = np.asarray(getattr(self.viz, "scene_origin_quat", [0, 0, 0, 1]), np.float64)
-            scene_p = np.asarray(getattr(self.viz, "scene_origin_pos", [0, 0, 0]), np.float64)
-            traj_b = _to_bullet_pts(scene_q, scene_p, np.asarray(self.viz.traj_gt, np.float32))
-
-            # 2) 씬 OBJ 후보 자동 탐색 (scene_path 옆)
-            scene_obj = _find_scene_obj_recursive(getattr(self.viz, "scene_path", ""))
-            print("[nimble] scene candidate:", scene_obj)
-            est, pred_b, snaps_b = nimfit.fit_params_from_gt(
-                gt_xyz=traj_b, dt=float(self.viz.traj_dt),
-                obj_path=self._last_obj_path,
-                init_pose_xyz=tuple(traj_b[0]),
-                init_quat_xyzw=tuple(self._last_init_quat),
-                scene_obj=scene_obj,
-                scene_pos_xyz=tuple(scene_p.tolist()),
-                scene_quat_xyzw=tuple(scene_q.tolist()),
-                use_plane=(scene_obj is None),
-                iters=int(self.train_iters),
-                record_every=int(self.snap_every),
-                seed=1234,
-                init_guess=None,
-            )
-
-            # 예측/스냅샷을 Gaussian으로 되돌려 viz에 반영
-            pred_g = _to_gaussian_pts(scene_q, scene_p, np.asarray(pred_b, np.float64))
-            self.viz.traj_pred = [tuple(p) for p in pred_g]
-            self.viz.traj_viz_on = True
-
-            snaps_g = []
-            for s in snaps_b:
-                s_g = _to_gaussian_pts(scene_q, scene_p, np.asarray(s, np.float64))
-                snaps_g.append((s_g.astype(np.float32), [1.0, 0.5, 0.0, 1.0]))  # 색상은 뷰어가 무시할 수도 있음
-            # 뷰어가 (points, color) 튜플 리스트를 읽는 구조라면 그대로, 아니라면 points만 넣어도 됨
-            self.viz.traj_snapshots = snaps_g if hasattr(self.viz, "traj_snapshots") else []
-
-            # 학습 결과 저장(뷰어 패널에서 확인 가능)
-            self.viz.traj_learned_params = est
-            print("[nimble] est:", est)
-
+            arr = np.load(path)
+            # 기대 shape: [T+1, 2, 3] in Gaussian coords
+            if arr.ndim == 3 and arr.shape[1] == 2 and arr.shape[2] == 3:
+                self.viz.traj_gt = arr
+                self.viz.traj_gt_multi = [arr[:,0,:], arr[:,1,:]]
+                self.viz.traj_viz_on = True
+                self.last_gt_path = path
+                self.start0_g = self.viz.traj_gt_multi[0][0]
+                self.start1_g = self.viz.traj_gt_multi[1][0]
+                print(f"[traj] loaded GT: {path}")
+            else:
+                print(f"[traj] npy shape mismatch: {arr.shape}")
         except Exception as e:
-            print("[nimble] train error:", e)
-        finally:
-            self._training = False
+            print(f"[traj] load npy error: {e}")
+
+    def _on_save_gt_npy(self):
+        if getattr(self.viz, "traj_gt", None) is None:
+            print("[traj] no GT to save.")
+            return
+        save_dir = self.last_save_dir or os.getcwd()
+        os.makedirs(save_dir, exist_ok=True)
+        out = os.path.join(save_dir, "traj_gt.npy")
+        try:
+            np.save(out, np.asarray(self.viz.traj_gt))
+            self.last_save_dir = save_dir
+            print(f"[traj] saved GT to {out}")
+        except Exception as e:
+            print(f"[traj] save error: {e}")
+
+    def _open_file_dialog(self, title, exts=None):
+        # 환경마다 구현이 다를 수 있어 간단 대체
+        print(title)
+        path = input("Enter file path: ").strip()
+        if not path:
+            return None
+        if exts and (os.path.splitext(path)[1].lower() not in exts):
+            print("Invalid extension.")
+            return None
+        if not os.path.exists(path):
+            print("File not found.")
+            return None
+        return path
+
+    def _clear_all_trajs_and_caches(self):
+        # viz overlay 비우기
+        if hasattr(self.viz, "traj_gt"):
+            self.viz.traj_gt = None
+        if hasattr(self.viz, "traj_gt_multi"):
+            self.viz.traj_gt_multi = []
+        # pred/fit 관련 상태는 제거(이 위젯에선 사용 안 함)
+
+        # 내부 캐시/로그 리셋
+        self._last_sim_starts_b = None
+        print("[traj] cleared GT and caches.")
+
+    # -----------------------------
+    # GT 시뮬레이션 (sandbox backend 사용: 구체)
+    # -----------------------------
+    def _do_simulate_gt(self):
+        if not self._resolve_objects_from_load_widget():
+            print("[two-body-gt] no object pair selected in Load widget.")
+            return
+
+        # 1) scene & sim params
+        scene_q, scene_p = self._get_scene_pose()
+        dt, substeps, seconds, scene_rotx_deg, gravity = self._get_sim_params()
+
+        # 2) 시작점 (Gaussian -> Bullet)
+        g2b = lambda P: _to_bullet_pts(scene_q, scene_p, P)
+        s0_b = np.asarray(g2b(self.start0_g), np.float64).reshape(-1, 3)[0].tolist()
+        s1_b = np.asarray(g2b(self.start1_g), np.float64).reshape(-1, 3)[0].tolist()
+        starts_b = [s0_b, s1_b]
+
+        # 3) sandbox로 GT 시뮬레이션 (현재 월드의 scene_body_id 재사용)
+        obj_paths = [FIXED_OBJ_PATH, FIXED_OBJ_PATH]
+        scene_mesh = self.scene_mesh
+        print("mesh call successful")
+
+        gt_b = sb.bullet_record_traj_multi(
+            scene_path=scene_mesh,                      # 파일 경로 불필요 (현재 scene 사용)
+            object_paths=obj_paths,
+            seconds=seconds, dt=dt, substeps=substeps,
+            scene_rotx_deg=scene_rotx_deg,
+            gravity=gravity,
+            starts=starts_b,
+            v0s=[self.v0_0.tolist(), self.v0_1.tolist()],
+            mu=float(self.gt_mu), e=float(self.gt_e),
+            mu_roll=float(self.mu_roll), mu_spin=float(self.mu_spin),
+            masses=[float(self.gt_mass0), float(self.gt_mass1)],
+        )
+
+        print("simulation successful")
+
+        # 4) Bullet -> Gaussian 변환 및 viz 반영
+        b2g = lambda P: _to_gaussian_pts(scene_q, scene_p, P)
+        gt_g = np.asarray(b2g(gt_b.reshape(-1,3)).reshape(gt_b.shape), np.float32)
+
+        self.viz.traj_gt = gt_g
+        self.viz.traj_gt_multi = [gt_g[:,0,:], gt_g[:,1,:]]
+        self.viz.traj_viz_on = True
+
+        # Pred 시작점으로 동일 재사용할 수 있게 저장(옵션)
+        self._last_sim_starts_b = [ starts_b[0], starts_b[1] ]
+
+        print(f"[two-body-gt] simulated {gt_g.shape[0]-1} frames (dt={dt:.5f}, seconds={seconds})")
+
+    def _on_train_two_stage(self):
+        # 0) GT가 있어야 학습 가능
+        if getattr(self.viz, "traj_gt", None) is None:
+            print("[fit] GT trajectory is missing. Create or load GT first.")
+            return
+
+        # 1) 공통 scene/params/변환
+        scene_q, scene_p = self._get_scene_pose()
+        dt, substeps, seconds, scene_rotx_deg, gravity = self._get_sim_params()
+
+        # Gaussian GT → Bullet GT
+        g2b = lambda P: _to_bullet_pts(scene_q, scene_p, P)
+        gt_g = np.asarray(self.viz.traj_gt, np.float32)  # [T+1,2,3] (Gaussian)
+        gt_b = g2b(gt_g.reshape(-1, 3)).reshape(gt_g.shape)  # (Bullet)
+
+        # 시작점(Bullet), 오브젝트 경로
+        s0_b = np.asarray(g2b(self.start0_g), np.float64).reshape(-1, 3)[0].tolist()
+        s1_b = np.asarray(g2b(self.start1_g), np.float64).reshape(-1, 3)[0].tolist()
+        starts_b = [s0_b, s1_b]
+
+        obj_paths = [FIXED_OBJ_PATH, FIXED_OBJ_PATH]
+
+        # 2) 원본 정확도 높은 최적화 함수 호출 (현재 월드 그대로 사용)
+        res = sb.simulate(
+            scene = self.scene_mesh, objects = obj_paths, seconds = seconds, dt = dt, substeps = substeps,
+            rotation = scene_rotx_deg, gravity = gravity, starts = starts_b, gt_traj = gt_b,
+            fit_iters1 = self.fit_iters1, fit_iters2 = self.fit_iters2,
+            fit_fast_seconds1 = self.fit_fast_seconds1, fit_stride1 = self.fit_stride1, fit_stride2 = self.fit_stride2,
+            fit_post_tail = self.fit_post_tail
+        )
+
+        v0_est, mu_est, e_est, mu_roll_est, mu_spin_est, m_est = sb.split_params(res[0], 2)
+        length = gt_b.shape[0]
+        self.duration = res[4]
+        self.loss = res[3][1] / length
+        self.mu = mu_est
+        self.e = e_est
+        masses = [round(float(x), 3) for x in m_est.tolist()]
+        self.massratio = masses[0] / masses[1]
+        run = {"loss": self.loss, "duration":self.duration}
+
+        traj_pred_b = res[1]
+
+        out_path = Path.cwd() / "data" / "gt" / "traj_bullet.npy"
+        np.save(out_path, np.asarray(traj_pred_b, dtype=np.float32))
+        print(f"[fit] Saved to {out_path}")
+
+        # 5) Bullet → Gaussian 변환 후 오버레이
+        b2g = lambda P: _to_gaussian_pts(scene_q, scene_p, P)
+        traj_pred_g = np.asarray(b2g(traj_pred_b.reshape(-1, 3)).reshape(traj_pred_b.shape), np.float32)
+
+        # viz에 예측 궤적 올리기 (GT와 구분)
+        self.viz.traj_pred = traj_pred_g
+        self.viz.traj_pred_multi = [traj_pred_g[:, 0, :], traj_pred_g[:, 1, :]]
+        self.viz.traj_viz_on = True
+
+        # --- (추가) best 궤적을 실제 포켓볼 2개로 재생하는 데모 요청 ---
+        try:
+            # obj_paths 는 위에서 FIXED_OBJ_PATH 두 개로 만들어둔 리스트
+            # (예: obj_paths = [FIXED_OBJ_PATH, FIXED_OBJ_PATH])
+            if hasattr(self.viz, "start_traj_demo_from_predicted"):
+                self.viz.start_traj_demo_from_predicted(
+                    traj_pred_b,  # [T+1, 2, 3] (Bullet world)
+                    obj_paths,  # 두 공에 대응하는 obj 경로 리스트 (len=2)
+                    FIXED_PLY_PATH  # 두 공에 모두 사용할 Gaussian .ply
+                )
+        except Exception as e:
+            print(f"[fit] live demo spawn failed: {e}")
+
+        self._save_runs_as_json(run)
+
+        # # 4) 결과 물성으로 seconds 동안 예측 궤적 시뮬레이션 (현재 월드 재사용)
+        # #    - build_bullet_cache(...) → simulate_bullet_once_multi(...) 사용
+        # args_base = sb.build_bullet_cache(
+        #     scene_obj=None,
+        #     object_paths=obj_paths,
+        #     scene_rotx_deg=scene_rotx_deg,
+        #     start_positions=starts_b,
+        #     gravity=gravity,
+        #     dt=dt,
+        #     substeps=substeps,
+        #     scene_body_id=scene_body_id
+        # )
+        # args_base.update(dict(
+        #     seconds=float(seconds),
+        #     post_tail=float(self.fit_post_tail),
+        #     contact_window=8
+        # ))
+        #
+        # v0_flat = np.array(res["v0"], dtype=np.float32).reshape(-1)
+        # traj_pred_b = sb.simulate_bullet_once_multi(
+        #     args_base=args_base,
+        #     v0_flat=v0_flat,
+        #     mu=float(res["mu"]),
+        #     e=float(res["e"]),
+        #     mu_roll=float(res["mu_roll"]),
+        #     mu_spin=float(res["mu_spin"]),
+        #     masses=list(map(float, res["masses"])),
+        #     seconds_=float(seconds)
+        # )
+
+    def _save_runs_as_json(self, data):
+        runs_dir = Path(".") / "runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+
+        name = self.jsonfile["scene_name"]
+        out_path = runs_dir / f"{name}.json"
+        with open(out_path, "w") as f:
+            json.dump(data, f)
+        print("json saved to {}".format(out_path))

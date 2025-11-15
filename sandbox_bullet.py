@@ -15,6 +15,7 @@ import open3d as o3d
 try:
     import pybullet as p
     import pybullet_data
+    from pybullet_utils import bullet_client
 except Exception as _e:
     raise RuntimeError("PyBullet not available. Install with: pip install pybullet") from _e
 
@@ -47,7 +48,29 @@ def compute_bounding_sphere(verts: np.ndarray, center_hint: str = "com"):
     r = np.linalg.norm(verts - c, axis=1).max()
     return c.astype(np.float32), float(r)
 
-
+# --- NEW: path-aware bounding sphere util ---
+def compute_bounding_sphere_from_obj(path: str, center_hint: str = "com"):
+    """
+    OBJ 파일 경로를 받아 바운딩 스피어 (center, radius)를 리턴.
+    center_hint: "com" | "bbox" | "origin"
+    """
+    import trimesh
+    mesh = trimesh.load(path, force='mesh')
+    if not isinstance(mesh, trimesh.Trimesh):
+        raise RuntimeError(f"'{path}' is not a triangle mesh")
+    verts = np.asarray(mesh.vertices, dtype=np.float32)
+    if verts.size == 0:
+        # 비어있으면 안전한 기본값
+        return np.zeros(3, dtype=np.float32), 0.1
+    if center_hint == "origin":
+        c = np.zeros(3, dtype=np.float32)
+    elif center_hint == "bbox":
+        bbmin = verts.min(0); bbmax = verts.max(0)
+        c = (bbmin + bbmax) * 0.5
+    else:  # "com"
+        c = verts.mean(0)
+    r = float(np.linalg.norm(verts - c, axis=1).max())
+    return c.astype(np.float32), r
 # ─────────────────────────────────────────────────────────────
 # PyBullet backend
 # ─────────────────────────────────────────────────────────────
@@ -235,16 +258,14 @@ def bullet_record_traj_multi(scene_path, object_paths, seconds, dt, substeps,
             pos,_ = p.getBasePositionAndOrientation(bid)
             traj[s,i,:] = np.asarray(pos, np.float32)
 
-    p.disconnect()
+    p.disconnect(cid)
     return traj
-
-
 # ─────────────────────────────────────────────────────────────
 # Loss / Opt / Viz
 # ─────────────────────────────────────────────────────────────
 
 def traj_loss(traj_pred, traj_gt, stride=1, weights=None,
-              reduction="mean",    # "mean" | "sum"
+              reduction="sum",    # "mean" | "sum"
               p="l2",              # "l2" | "l1" | "charbonnier"
               epsilon=1e-3,
               time_gamma=None):    # None 또는 >=0 (뒤로 갈수록 가중↑)
@@ -273,6 +294,8 @@ def traj_loss(traj_pred, traj_gt, stride=1, weights=None,
     else:
         raise ValueError("p must be l2|l1|charbonnier")
 
+    pure_loss = float(np.sum(per_frame))
+
     # 시간가중 (뒤로 갈수록↑) : 누적오차 민감도 상승
     if time_gamma is not None and T1 > 1:
         Tf = per_frame.shape[0]
@@ -288,7 +311,7 @@ def traj_loss(traj_pred, traj_gt, stride=1, weights=None,
         per_frame = per_frame * W
 
     if reduction == "sum":
-        return float(np.sum(per_frame))
+        return float(np.sum(per_frame)), pure_loss
     else:
         return float(np.mean(per_frame))
 
@@ -343,225 +366,6 @@ def find_first_pair_contact(traj_gt: np.ndarray, radii: list, eps=0.02):
                 if dij <= (radii[i] + radii[j]) * (1.0 + eps):
                     return t
     return -1
-
-def vel_loss_pair_normal(traj_pred: np.ndarray, traj_gt: np.ndarray, k_contact: int, dt: float, window: int = 4):
-    """첫 접촉 프레임 k_contact 주변에서 두 물체 상대 법선속도 오차를 L2로 계산.
-       - pred가 fast_seconds로 짧을 수 있으므로, 내부에서 길이 정렬/클램프 처리
-    """
-    P_full = np.asarray(traj_pred)  # [Tp1_pred, N, 3]
-    G_full = np.asarray(traj_gt)    # [Tp1_gt,   N, 3]
-    if P_full.ndim != 3 or G_full.ndim != 3:
-        return 0.0
-    Np = P_full.shape[1]
-    Ng = G_full.shape[1]
-    if min(Np, Ng) < 2:
-        return 0.0
-
-    # 공통 길이로 정렬
-    Tp1 = min(P_full.shape[0], G_full.shape[0])
-    P = P_full[:Tp1]
-    G = G_full[:Tp1]
-
-    # k_contact 클램프 (양쪽 모두에서 접근 가능하도록)
-    if k_contact < 1 or k_contact >= Tp1-1:
-        # 접촉이 너무 초반/후반이면 비교를 생략
-        return 0.0
-
-    def rel_nvel(traj):
-        # 속도: 중앙차분 (경계는 전/후진차분)
-        V = np.zeros_like(traj)
-        V[1:-1] = (traj[2:] - traj[:-2]) / (2.0*dt)
-        V[0]    = (traj[1] - traj[0]) / dt
-        V[-1]   = (traj[-1] - traj[-2]) / dt
-        # 법선: 두 물체(0,1) 사이 방향
-        n = traj[:, 1, :] - traj[:, 0, :]
-        n_norm = np.linalg.norm(n, axis=1, keepdims=True) + 1e-8
-        nhat = n / n_norm
-        vr = V[:, 1, :] - V[:, 0, :]  # 상대속도
-        vn = np.sum(vr * nhat, axis=1)  # [Tp1]
-        return vn
-
-    vn_p = rel_nvel(P)
-    vn_g = rel_nvel(G)
-
-    # 창 클램프: a..b 가 양쪽에 대해 유효하도록
-    a = max(0, k_contact - window)
-    b = min(Tp1, k_contact + window + 1)
-    if b <= a + 1:
-        return 0.0
-
-    diff = vn_p[a:b] - vn_g[a:b]  # 길이 동일 보장
-    return float(np.mean(diff * diff))
-
-def dvel_loss_window(traj_pred: np.ndarray, traj_gt: np.ndarray, k_contact: int, dt: float, window: int = 2):
-    """k_contact 주변에서 각 바디의 속도변화(Δv) L2 오차."""
-    P = np.asarray(traj_pred); G = np.asarray(traj_gt)
-    if P.ndim != 3 or G.ndim != 3:
-        return 0.0
-    T1 = min(P.shape[0], G.shape[0])
-    P = P[:T1]; G = G[:T1]
-    N = G.shape[1]
-    if k_contact < 2 or k_contact >= T1-2 or N < 2:
-        return 0.0
-
-    def vel(traj):
-        V = np.zeros_like(traj)
-        V[1:-1] = (traj[2:] - traj[:-2]) / (2.0*dt)
-        V[0]    = (traj[1] - traj[0]) / dt
-        V[-1]   = (traj[-1] - traj[-2]) / dt
-        return V
-
-    Vp, Vg = vel(P), vel(G)
-    a = max(1, k_contact - window)
-    b = min(T1-1, k_contact + window)
-    dVp = Vp[a+1:b+1] - Vp[a-1:b-1]
-    dVg = Vg[a+1:b+1] - Vg[a-1:b-1]
-    diff = dVp - dVg
-    return float(np.mean(diff*diff))
-
-def momentum_normal_loss(traj_pred: np.ndarray, traj_gt: np.ndarray, k_contact: int, dt: float,
-                         masses: np.ndarray, window: int = 2):
-    """첫 동적-동적 접촉 주변(±window)에서 법선방향 총운동량 변화(전후)의 차이를 벌점."""
-    P = np.asarray(traj_pred); G = np.asarray(traj_gt)
-    if P.ndim != 3 or G.ndim != 3:
-        return 0.0
-    T1 = min(P.shape[0], G.shape[0])
-    P = P[:T1]; G = G[:T1]
-    N = G.shape[1]
-    if k_contact < 2 or k_contact >= T1-2 or N < 2:
-        return 0.0
-
-    def vel(traj):
-        V = np.zeros_like(traj)
-        V[1:-1] = (traj[2:] - traj[:-2]) / (2.0*dt)
-        V[0]    = (traj[1] - traj[0]) / dt
-        V[-1]   = (traj[-1] - traj[-2]) / dt
-        return V
-
-    def p_normal(traj, V, masses_):
-        # 법선은 0↔1 바디 연결 방향
-        n = traj[:, 1, :] - traj[:, 0, :]
-        nhat = n / (np.linalg.norm(n, axis=1, keepdims=True) + 1e-8)  # [T,1,3]
-        # 각 바디 속도의 법선성분
-        vn = np.sum(V * nhat[:, None, :], axis=2)   # [T,N]
-        mcol = np.asarray(masses_, np.float32)[None, :]  # [1,N]
-        p_n = np.sum(mcol * vn, axis=1)             # [T]
-        return p_n
-
-    Vp, Vg = vel(P), vel(G)
-    a = max(1, k_contact - window)
-    b = min(T1-1, k_contact + window)
-
-    pn_pre_p  = np.mean(p_normal(P[a-1:b-1], Vp[a-1:b-1], masses))
-    pn_post_p = np.mean(p_normal(P[a+1:b+1], Vp[a+1:b+1], masses))
-    # GT는 GT의 실제 질량으로 계산 (gt_traj를 만들 때 썼던 gt_masses)
-    # 여기서는 GT 질량 대신 "관측량"으로 보고 변화량만 비교
-    Vg_pre  = np.mean(p_normal(G[a-1:b-1], Vg[a-1:b-1], np.ones((N,), np.float32)))
-    Vg_post = np.mean(p_normal(G[a+1:b+1], Vg[a+1:b+1], np.ones((N,), np.float32)))
-    # GT에서의 법선 운동량 변화량 대비, 예측의 변화량이 같아야 한다고 가정
-    dp_p = pn_post_p - pn_pre_p
-    dp_g = Vg_post - Vg_pre
-    return float((dp_p - dp_g) ** 2)
-
-def e_consistency_loss(traj_pred: np.ndarray, traj_gt: np.ndarray, k_contact: int, dt: float, window: int = 2):
-    """첫 동적-동적 접촉 근방(±window)에서, GT로부터 관측한 e와
-       예측으로부터 관측한 e의 차이를 L2로 벌점."""
-    P = np.asarray(traj_pred); G = np.asarray(traj_gt)
-    if P.ndim != 3 or G.ndim != 3:
-        return 0.0
-    T1 = min(P.shape[0], G.shape[0])
-    P = P[:T1]; G = G[:T1]
-    if k_contact < 2 or k_contact >= T1-2 or G.shape[1] < 2:
-        return 0.0
-
-    def rel_n_v(traj):
-        V = np.zeros_like(traj)
-        V[1:-1] = (traj[2:] - traj[:-2]) / (2.0*dt)
-        V[0]    = (traj[1] - traj[0]) / dt
-        V[-1]   = (traj[-1] - traj[-2]) / dt
-        n = traj[:, 1, :] - traj[:, 0, :]
-        nhat = n / (np.linalg.norm(n, axis=1, keepdims=True) + 1e-8)
-        vr = V[:, 1, :] - V[:, 0, :]
-        vn = np.sum(vr * nhat, axis=1)  # [T]
-        return vn
-
-    vn_p = rel_n_v(P); vn_g = rel_n_v(G)
-    a = max(1, k_contact - window)
-    b = min(T1-1, k_contact + window)
-
-    # 전/후 평균으로 노이즈 제거
-    pre_p  = np.mean(vn_p[a-1:b-1]); post_p = np.mean(vn_p[a+1:b+1])
-    pre_g  = np.mean(vn_g[a-1:b-1]); post_g = np.mean(vn_g[a+1:b+1])
-
-    # 분모가 너무 작으면 무력화
-    eps = 1e-5
-    if abs(pre_p) < eps or abs(pre_g) < eps:
-        return 0.0
-
-    e_pred = -post_p / (pre_p + np.sign(pre_p)*eps)
-    e_gt   = -post_g / (pre_g + np.sign(pre_g)*eps)
-
-    # 합리 범위로 클리핑
-    e_pred = float(np.clip(e_pred, 0.0, 1.5))
-    e_gt   = float(np.clip(e_gt,   0.0, 1.5))
-    return (e_pred - e_gt) ** 2
-
-def mass_consistency_loss(traj_gt: np.ndarray, k_contact: int, dt: float,
-                          masses: np.ndarray, window: int = 2):
-    """GT 궤적에서 관측한 {v1_pre, v2_pre, v1_post, v2_post, e_gt}가
-       1D 두-물체 충돌식과 (예측) 질량 m1,m2로 일치하도록 벌점."""
-    G = np.asarray(traj_gt)
-    if G.ndim != 3 or G.shape[1] < 2:
-        return 0.0
-    T1 = G.shape[0]
-    if k_contact < 2 or k_contact >= T1-2:
-        return 0.0
-
-    def rel_n_v(traj):
-        V = np.zeros_like(traj)
-        V[1:-1] = (traj[2:] - traj[:-2]) / (2.0*dt)
-        V[0]    = (traj[1] - traj[0]) / dt
-        V[-1]   = (traj[-1] - traj[-2]) / dt
-        n = traj[:, 1, :] - traj[:, 0, :]
-        nhat = n / (np.linalg.norm(n, axis=1, keepdims=True) + 1e-8)
-        vr = V[:, 1, :] - V[:, 0, :]
-        vn = np.sum(vr * nhat, axis=1)  # [T]
-        # 각 바디의 법선 성분 (개별)
-        v1n = np.sum(V[:, 0, :] * nhat, axis=1)
-        v2n = np.sum(V[:, 1, :] * nhat, axis=1)
-        return vn, v1n, v2n
-
-    _, v1n, v2n = rel_n_v(G)
-    a = max(1, k_contact - window)
-    b = min(T1-1, k_contact + window)
-
-    # 전/후 평균(노이즈 완화)
-    v1_pre  = float(np.mean(v1n[a-1:b-1]))
-    v2_pre  = float(np.mean(v2n[a-1:b-1]))
-    v1_post = float(np.mean(v1n[a+1:b+1]))
-    v2_post = float(np.mean(v2n[a+1:b+1]))
-
-    # e_gt 관측
-    eps = 1e-6
-    vn_pre  = float(np.mean((v2n[a-1:b-1] - v1n[a-1:b-1])))
-    vn_post = float(np.mean((v2n[a+1:b+1] - v1n[a+1:b+1])))
-    if abs(vn_pre) < 1e-5:
-        return 0.0
-    e_gt = -vn_post / (vn_pre + np.sign(vn_pre)*eps)
-    e_gt = float(np.clip(e_gt, 0.0, 1.5))
-
-    m1, m2 = float(masses[0]), float(masses[1])
-    denom  = m1 + m2
-    if denom <= eps:
-        return 0.0
-
-    # 1D 충돌 방정식으로 예측되는 post
-    v1_post_hat = ((m1 - e_gt*m2)*v1_pre + (1.0 + e_gt)*m2*v2_pre) / denom
-    v2_post_hat = ((m2 - e_gt*m1)*v2_pre + (1.0 + e_gt)*m1*v1_pre) / denom
-
-    r1 = v1_post - v1_post_hat
-    r2 = v2_post - v2_post_hat
-    return float(0.5*(r1*r1 + r2*r2))
 
 def compute_pair_contact_weights(traj_gt: np.ndarray, radii: list, smooth=3, boost=3.0, eps=0.02):
     """물체-물체(동적-동적) 접촉 프레임을 강조하는 가중치 (길이 T+1)"""
@@ -668,7 +472,10 @@ def spsa_optimize(gt_traj, args_base, theta0, N,
        - 마지막 반복은 반드시 히스토리에 포함
        - 루프 동안 '최저 검증손실 θ'를 추적하여 최종(초록) 궤적으로 사용
     """
-    win_contact = int(args_base.get("contact_window", 3))
+
+    #time count 1: 초반 파라미터 설정 및 보정
+    t0 = perf_counter()
+    duration = 0
     rng = random.Random(0xC0FFEE)
     theta = clamp_params(theta0, N, v_bounds=v_bounds)
 
@@ -699,6 +506,10 @@ def spsa_optimize(gt_traj, args_base, theta0, N,
 
     # 커리큘럼(초기 질량 위주 → 후기 e/μ 점증)
     K_mass = int(0.6 * iters)
+
+    t1 = perf_counter()
+    duration = t1 - t0
+    # time count 1 종료
 
     def phase_alphas(k):
         if k < K_mass:
@@ -732,9 +543,12 @@ def spsa_optimize(gt_traj, args_base, theta0, N,
 
     # --------- 추가: '최저 손실 θ' 추적용 변수 ----------
     best_theta = theta.copy()
-    best_loss  = float("inf")
-
+    best_loss  = (float("inf"), float("inf"))
+    length = gt_traj.shape[0]
     for k in range(iters):
+
+        #time count 2: 파라미터 할당 및 계산
+        t0 = perf_counter()
         ck = c0 / ((k + 1.0) ** gamma)
         ak = a0 / ((k + 1.0 + Ak) ** alpha)
         delta = np.array([1 if rng.random() < 0.5 else -1 for _ in range(len(theta))], dtype=np.float32)
@@ -744,9 +558,14 @@ def spsa_optimize(gt_traj, args_base, theta0, N,
 
         v0p, mup, ep, mu_rollp, mu_spinp, mp = split_params(thetap, N)
         v0m, mum, em, mu_rollm, mu_spinm, mm = split_params(thetam, N)
+        t1 = perf_counter()
+        #time count 2 종료
 
         traj_p = simulate_bullet_once_multi(args_base, v0p, mup, ep, mu_rollp, mu_spinp, mp, seconds=T_fast)
         traj_m = simulate_bullet_once_multi(args_base, v0m, mum, em, mu_rollm, mu_spinm, mm, seconds=T_fast)
+
+        #time count 3: spsa 업데이트 계산
+        t2 = perf_counter()
 
         A  = phase_alphas(k)
         Wk = phase_weights(k, weights_all, k_star, T_total=len(weights_all))
@@ -754,24 +573,10 @@ def spsa_optimize(gt_traj, args_base, theta0, N,
         # 기본 위치/시간가중 손실 (sum: 후반 누적오차 민감)
         fp = A["alpha_pos"] * traj_loss(traj_p, gt_traj, stride=stride, weights=Wk,
                                         reduction="sum", p="l2",
-                                        time_gamma=(1.5 if k >= K_mass else None))
+                                        time_gamma=(1.5 if k >= K_mass else None))[0]
         fm = A["alpha_pos"] * traj_loss(traj_m, gt_traj, stride=stride, weights=Wk,
                                         reduction="sum", p="l2",
-                                        time_gamma=(1.5 if k >= K_mass else None))
-
-        # if k_star != -1:
-        #     fp += A["alpha_dv"]  * dvel_loss_window(traj_p, gt_traj, k_contact=k_star, dt=args_base["dt"], window=win_contact)
-        #     fm += A["alpha_dv"]  * dvel_loss_window(traj_m, gt_traj, k_contact=k_star, dt=args_base["dt"], window=win_contact)
-        #
-        #     fp += A["alpha_mom"] * momentum_normal_loss(traj_p, gt_traj, k_contact=k_star, dt=args_base["dt"], masses=mp, window=win_contact)
-        #     fm += A["alpha_mom"] * momentum_normal_loss(traj_m, gt_traj, k_contact=k_star, dt=args_base["dt"], masses=mm, window=win_contact)
-        #
-        #     if A["alpha_e"] > 0.0:
-        #         fp += A["alpha_e"] * e_consistency_loss(traj_p, gt_traj, k_contact=k_star, dt=args_base["dt"], window=win_contact)
-        #         fm += A["alpha_e"] * e_consistency_loss(traj_m, gt_traj, k_contact=k_star, dt=args_base["dt"], window=win_contact)
-        #
-        #     fp += A["alpha_mratio"] * mass_consistency_loss(gt_traj, k_contact=k_star, dt=args_base["dt"], masses=mp, window=win_contact)
-        #     fm += A["alpha_mratio"] * mass_consistency_loss(gt_traj, k_contact=k_star, dt=args_base["dt"], masses=mm, window=win_contact)
+                                        time_gamma=(1.5 if k >= K_mass else None))[0]
 
         # prior penalty
         mu_pp, e_pp = thetap[3 * N], thetap[3 * N + 1]
@@ -784,6 +589,8 @@ def spsa_optimize(gt_traj, args_base, theta0, N,
         # SPSA gradient & update
         ghat  = (fp - fm) / (2.0 * ck) * (1.0 / delta)
         theta = clamp_params(theta - ak * (upd * ghat), N, v_bounds=v_bounds)
+        t3 = perf_counter()
+        #time count 3 종료
 
         # ---------- 변경점 ①: 히스토리 저장 (마지막 반복은 반드시 저장) ----------
         if (k + 1) == iters or len(hist) < store_k:
@@ -791,6 +598,8 @@ def spsa_optimize(gt_traj, args_base, theta0, N,
             traj_now = simulate_bullet_once_multi(args_base, v0c, muc, ec, mu_rollc, mu_spinc, mc, seconds=T_fast)
             hist.append((k, traj_now))
 
+        #time count 4: best loss 갱신
+        t4 = perf_counter()
         # ---------- 변경점 ②: '현재 θ' 검증손실로 best 갱신 ----------
         # 같은 창/가중으로 간단 검증
         v0c, muc, ec, mu_rollc, mu_spinc, mc = split_params(theta, N)
@@ -798,233 +607,85 @@ def spsa_optimize(gt_traj, args_base, theta0, N,
         cur_loss = traj_loss(traj_cur, gt_traj, stride=stride, weights=Wk,
                              reduction="sum", p="l2",
                              time_gamma=(1.5 if k >= K_mass else None))
-        if cur_loss < best_loss:
-            best_loss  = float(cur_loss)
+        print(f"[FIT] Loss for iteration {k + 1} is {cur_loss[1]/length}")
+        if cur_loss[0] < best_loss[0]:
+            best_loss  = cur_loss
             best_theta = theta.copy()
+        t5 = perf_counter()
+        #time count 4 종료 및 잰 시간 합산
+        duration += t5-t4 + t3-t2 + t1-t0
 
+    #time count 5: 최종 궤적 산출
+    t0 = perf_counter()
     # -------- 루프 종료: 'best_theta'로 최종 궤적/손실 산출 ----------
     v0b, mub, eb, mu_rollb, mu_spinb, mb = split_params(best_theta, N)
     traj_best = simulate_bullet_once_multi(args_base, v0b, mub, eb, mu_rollb, mu_spinb, mb, seconds=T_fast)
 
     Afin = phase_alphas(iters - 1)
     final_loss = Afin["alpha_pos"] * traj_loss(traj_best, gt_traj, stride=stride, weights=weights_all,
-                                               reduction="sum", p="l2", time_gamma=1.5)
-    # if k_star != -1:
-    #     final_loss += Afin["alpha_dv"]  * dvel_loss_window(traj_best, gt_traj, k_contact=k_star, dt=args_base["dt"], window=win_contact)
-    #     final_loss += Afin["alpha_mom"] * momentum_normal_loss(traj_best, gt_traj, k_contact=k_star, dt=args_base["dt"], masses=mb, window=win_contact)
-    #     if Afin["alpha_e"] > 0.0:
-    #         final_loss += Afin["alpha_e"] * e_consistency_loss(traj_best, gt_traj, k_contact=k_star, dt=args_base["dt"], window=win_contact)
-    #     final_loss += Afin["alpha_mratio"] * mass_consistency_loss(gt_traj, k_contact=k_star, dt=args_base["dt"], masses=mb, window=win_contact)
+                                               reduction="sum", p="l2", time_gamma=1.5)[0]
 
     mu_bb, e_bb = mub, eb
     final_loss += lam_mu*(mu_bb - mu_prior)**2 + lam_e*(e_bb - e_prior)**2 \
                   + lam_roll*(mu_rollb - mu_roll_prior)**2 + lam_spin*(mu_spinb - mu_spin_prior)**2
+    t1 = perf_counter()
+    duration += t1-t0
+    #time count 5 종료
 
-    return best_theta, traj_best, hist, final_loss
-
-
-def draw_overlay_o3d(sv, sf, gt_traj, best_traj, hist_list, radii):
-    """다물체 궤적 시각화:
-    - GT: 파란 계열(바디마다 다른 톤)
-    - 학습 중 샘플(hist): 노란→빨강(이터레이션 진행색), 모든 바디
-    - 최종: 초록, 모든 바디
-    - radii: 길이 N 리스트(각 바디 구 반경)
-    """
-    import numpy as _np
-    scene = o3d.geometry.TriangleMesh()
-    scene.vertices = o3d.utility.Vector3dVector(sv.astype(_np.float64))
-    scene.triangles = o3d.utility.Vector3iVector(sf.astype(_np.int32))
-    scene.compute_vertex_normals()
-    scene.paint_uniform_color([0.75, 0.75, 0.75])
-
-    geoms = [scene]
-
-    def make_lines(pts, color):
-        pts = _np.asarray(pts)
-        lines = _np.stack([_np.arange(len(pts)-1), _np.arange(1,len(pts))], axis=1)
-        ls = o3d.geometry.LineSet(
-            points=o3d.utility.Vector3dVector(pts),
-            lines=o3d.utility.Vector2iVector(lines)
-        )
-        ls.colors = o3d.utility.Vector3dVector(_np.tile(_np.asarray(color, _np.float64), (len(lines),1)))
-        return ls
-
-    assert gt_traj.ndim == 3 and best_traj.ndim == 3, "traj shape should be [T+1, N, 3]"
-    T, N = gt_traj.shape[0], gt_traj.shape[1]
-
-    # 1) GT trajectories (blue-ish per body)
-    gt_palette = [
-        _np.array([0.10, 0.35, 1.00]),
-        _np.array([0.05, 0.55, 0.95]),
-        _np.array([0.20, 0.40, 0.85]),
-        _np.array([0.00, 0.65, 0.90]),
-    ]
-    for i in range(N):
-        gt_pts_i = gt_traj[:, i, :]
-        geoms.append(make_lines(gt_pts_i, gt_palette[i % len(gt_palette)]))
-
-    # 2) Hist trajectories (iteration: yellow -> red)
-    if len(hist_list) > 0:
-        K = len(hist_list)
-        for rank, (k, t) in enumerate(hist_list):
-            # 0 → yellow(1,1,0), 1 → red(1,0,0)
-            a = 0.0 if K == 1 else rank/(K-1)
-            col = _np.array([1.0, 1.0 - a, 0.0])
-            for i in range(N):
-                pts_i = t[:, i, :]
-                geoms.append(make_lines(pts_i, col))
-
-    # 3) Final trajectories (green) + spheres at start
-    for i in range(N):
-        best_pts_i = best_traj[:, i, :]
-        geoms.append(make_lines(best_pts_i, _np.array([0.0, 0.9, 0.2])))
-
-        ri = float(radii[i] if i < len(radii) else radii[-1])
-        sp = o3d.geometry.TriangleMesh.create_sphere(radius=ri)
-        sp.translate(best_pts_i[0].astype(_np.float64))
-        sp.paint_uniform_color([1.0, 0.0, 0.0])  # 시작점 구(빨강)
-        geoms.append(sp)
-
-    o3d.visualization.draw_geometries(geoms)
-
+    return best_theta, traj_best, hist, best_loss, duration
 
 # ─────────────────────────────────────────────────────────────
 # Main (default: generate GT → fit, Bullet only)
 # ─────────────────────────────────────────────────────────────
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--scene", type=str, required=True)
-    ap.add_argument("--objects", type=str, nargs="+", required=True)  # first is used
-    ap.add_argument("--seconds", type=float, default=3.0)
-    ap.add_argument("--dt", type=float, default=0.01)
-    ap.add_argument("--substeps", type=int, default=6)
-    ap.add_argument("--scene-rotx", type=float, default=0.0)
-    ap.add_argument("--gravity", type=float, nargs=3, default=[0.0, -9.81, 0.0])
-    ap.add_argument("--starts", type=float, nargs="*", default=None,
-                    help="시작 위치들: x1 y1 z1 x2 y2 z2 ... (N바디)")
-    ap.add_argument("--v0s", type=float, nargs="*", default=None,
-                    help="v0 초기추정: v01x v01y v01z v02x v02y v02z ... (N바디)")
+def simulate(scene, objects, seconds, dt, substeps, rotation, gravity, starts, gt_traj, viz_samples=10,
+             fit_iters1=2, fit_iters2=8, fit_fast_seconds1=0.1, fit_stride1=1, fit_stride2=2, fit_vmax=12, fit_post_tail=1):
 
-    # GT parameters for on-the-fly generation (Bullet)
-    ap.add_argument("--gt-v0s", type=float, nargs="*", default=None, help="GT v0 (x y z)")
-    ap.add_argument("--gt-mus", type=float, nargs="*", default=None, help="GT mu")
-    ap.add_argument("--gt-es", type=float, nargs="*", default=None, help="GT e")
-    ap.add_argument("--gt-masses", type=float, nargs="*", default=None)
-    ap.add_argument("--masses", type=float, nargs="*", default=None, help="initial guess masses (for fit start)")
-    ap.add_argument("--gt-save", type=str, default=None, help="optional: save generated GT traj .npy")
-    ap.add_argument("--gt-mu-roll", type=float, default=0.02, help="GT rolling friction")
-    ap.add_argument("--gt-mu-spin", type=float, default=0.01, help="GT spinning friction")
-
-    # Fitting hyper-params (2-stage by default)
-    ap.add_argument("--fit-2stage", action="store_true", default=True)
-    ap.add_argument("--fit-iters1", type=int, default=6)
-    ap.add_argument("--fit-iters2", type=int, default=6)
-    ap.add_argument("--fit-fast-seconds1", type=float, default=0.5)
-    ap.add_argument("--fit-fast-seconds2", type=float, default=None, help="None → full seconds")
-    ap.add_argument("--fit-stride1", type=int, default=3)
-    ap.add_argument("--fit-stride2", type=int, default=2)
-    ap.add_argument("--fit-vmax", type=float, default=12.0, help="|vx,vy,vz| clamp")
-
-    ap.add_argument("--viz-samples", type=int, default=10)
-    ap.add_argument("--no-preview", action="store_true")
-    ap.add_argument("--save", type=str, default=None, help="save final predicted traj .npy")
-    ap.add_argument("--fit-post-tail", type=float, default=1.0,
-                    help="초기(질량 위주) 반복에서 k* 이후 이 초 동안 프레임을 길게 포함")
-
-    ap.add_argument("--fit-mratio-iters", type=int, default=0,
-                    help="Stage 1.5: 질량비+e 집중 최적화 반복 수(0이면 스킵)")
-    ap.add_argument("--fit-mratio-seconds", type=float, default=None,
-                    help="Stage 1.5: 짧은 시뮬 길이(초). None이면 k*±win 자동")
-    ap.add_argument("--fit-contact-window", type=int, default=8,
-                    help="k* 전후로 볼 프레임 수(±win)")
-
-    args = ap.parse_args()
-
-    assert len(args.objects) >= 1, "at least one dynamic object required"
-    obj_path = args.objects[0]
-
-    obj_paths = args.objects
+    assert len(objects) >= 1, "at least one dynamic object required"
+    obj_paths = objects
     N = len(obj_paths)
 
     # starts: x1 y1 z1 x2 y2 z2 ...
-    if args.starts is not None:
-        starts = np.array(args.starts, dtype=np.float32).reshape(-1, 3)
+    if starts is not None:
+        starts = np.array(starts, dtype=np.float32).reshape(-1, 3)
         assert len(starts) == N, "--starts 길이는 objects 수와 같아야 합니다"
     else:
         starts = np.tile(np.array([[0.0, 1.0, 0.0]], np.float32), (N, 1))
 
     # (A) Generate GT by Bullet in this run (multi-body)
     # GT v0s: v01x v01y v01z v02x v02y v02z ...
-    if args.gt_v0s is not None:
-        gt_v0s = np.array(args.gt_v0s, dtype=np.float32).reshape(-1, 3)
-        assert len(gt_v0s) == N, "--gt-v0s 길이는 objects 수와 같아야 합니다"
-    else:
-        gt_v0s = np.zeros((N, 3), np.float32)
+    #shape: nparray, dtype float32, reshape(-1,3)
+    #mu, e: float
+    #masses: nparray, float32, reshape(-1)
 
-    gt_mu = (float(args.gt_mus[0]) if args.gt_mus is not None else 0.3)
-    gt_e = (float(args.gt_es[0]) if args.gt_es is not None else 0.3)
-
-    # GT masses: 바디별
-    if args.gt_masses is not None:
-        gt_masses = np.array(args.gt_masses, dtype=np.float32).reshape(-1)
-        assert len(gt_masses) == N, "--gt-masses 길이는 objects 수와 같아야 합니다"
-    else:
-        gt_masses = np.ones((N,), np.float32)
-
-    gt = bullet_record_traj_multi(
-        scene_path=args.scene,
-        object_paths=obj_paths,
-        seconds=args.seconds, dt=args.dt, substeps=args.substeps,
-        scene_rotx_deg=args.scene_rotx, gravity=tuple(args.gravity),
-        starts=starts, v0s=gt_v0s,
-        mu=gt_mu, e=gt_e,
-        mu_roll=args.gt_mu_roll, mu_spin=args.gt_mu_spin,
-        masses=gt_masses
-    )
-    if args.gt_save:
-        np.save(args.gt_save, gt)
-        print(f"[GT] saved to {args.gt_save}  shape={gt.shape}")
-
-    # (B) Build reusable Bullet world for fast fitting (multi-body)
+    # Build reusable Bullet world for fast fitting (multi-body)
     args_base = dict(
-        seconds=args.seconds, dt=args.dt, substeps=args.substeps,
-        scene=args.scene, objs=obj_paths,
-        scene_rotx=args.scene_rotx, gravity=tuple(args.gravity),
+        seconds=seconds, dt=dt, substeps=substeps,
+        scene=scene, objs=obj_paths,
+        scene_rotx=rotation, gravity=gravity,
         starts=[starts[i].tolist() for i in range(N)]
     )
     args_base["bullet_cache"] = build_bullet_cache(
-        scene_obj=args.scene,
+        scene_obj=scene,
         object_objs=obj_paths,
-        scene_rotx_deg=args.scene_rotx,
+        scene_rotx_deg=rotation,
         start_positions=args_base["starts"],
-        gravity=tuple(args.gravity),
-        dt=args.dt, substeps=args.substeps, radii_hint=None
+        gravity=gravity,
+        dt=dt, substeps=substeps
     )
-    args_base["post_tail"] = float(args.fit_post_tail)
-    args_base["contact_window"] = int(args.fit_contact_window)
-
+    args_base["post_tail"] = float(fit_post_tail)
     # (C) Initial theta (multi-body): v0(3N), mu, e, masses(N)
     # v0s 초기값: 사용자 지정 없으면 GT 앞 두 프레임으로 바디별 추정
-    if args.v0s is not None:
-        v0s_init = np.array(args.v0s, dtype=np.float32).reshape(-1, 3)
-        assert len(v0s_init) == N, "--v0s 길이는 objects 수와 같아야 합니다"
-    else:
-        v0s_init = np.zeros((N, 3), np.float32)
-        g = np.array(args_base["gravity"], np.float32)
-        # GT에서 body마다 p0,p1로 추정
-        for i in range(N):
-            p0 = gt[0, i, :];
-            p1 = gt[1, i, :]
-            v0s_init[i, :] = (p1 - p0) / args.dt - 0.5 * g * args.dt
+    v0s_init = np.zeros((N, 3), np.float32)
+    g = np.array(args_base["gravity"], np.float32)
+    # GT에서 body마다 p0,p1로 추정
+    for i in range(N):
+        p0 = gt_traj[0, i, :]
+        p1 = gt_traj[1, i, :]
+        v0s_init[i, :] = (p1 - p0) / dt - 0.5 * g * dt
 
     # masses 초기값: 사용자 지정 없으면 1.0
-    if args.masses is not None:
-        masses_init = np.array(args.masses, dtype=np.float32).reshape(-1)
-        assert len(masses_init) == N, "--masses 길이는 objects 수와 같아야 합니다"
-    else:
-        masses_init = np.ones((N,), np.float32)
-
+    masses_init = np.ones((N,), np.float32)
     mu_init = 0.3
     e_init = 0.3
     mu_roll_init = 0.02
@@ -1036,9 +697,9 @@ def main():
         axis=0
     )
 
-    v_bounds = ((-args.fit_vmax, args.fit_vmax),
-                (-args.fit_vmax, args.fit_vmax),
-                (-args.fit_vmax, args.fit_vmax))
+    v_bounds = ((-fit_vmax, fit_vmax),
+                (-fit_vmax, fit_vmax),
+                (-fit_vmax, fit_vmax))
 
     # 길이 = 3N + 4 + N  (mu,e,mu_roll,mu_spin = 4 scalars)
     upd1 = np.zeros(3 * N + 4 + N, dtype=np.float32);
@@ -1048,126 +709,50 @@ def main():
     upd2[3 * N + 4:] = 1.0  # + masses
     # Stage-2: 파라미터별 스텝 스케일 (충돌 많은 씬 안정화용)
     scale2 = upd2.astype(np.float32).copy()
-    # [v0(3N) | mu e mu_roll mu_spin | masses(N)]
     scale2[0:3 * N] *= 0.0  # v0 동결
     scale2[3 * N:3 * N + 2] *= 0.5  # mu, e: 중간
     scale2[3 * N + 2:3 * N + 4] *= 0.0  # rolling, spinning: 더 작게
     scale2[3 * N + 4:] *= 1.5 # masses
-    #upd2[3 * N + 4 + 0] = 0.0  # + (첫 물체 질량 고정)
-
+    print("init values calculated")
     # (D) Fit (2-stage default)
-    t0 = perf_counter()
-    if args.fit_2stage:
-        # Stage-1: v만 (짧게)
-        theta1, traj1, hist1, loss1 = spsa_optimize(
-            gt_traj=gt, args_base=args_base, theta0=theta0, N=N,
-            iters=args.fit_iters1, a0=0.08, c0=0.15, Ak=3.0,
-            stride=args.fit_stride1, fast_seconds=args.fit_fast_seconds1,
-            store_k=max(1, args.viz_samples // 2),
-            update_scale=upd1, v_bounds=v_bounds
-        )
-        # ---- Stage 1.5: contact 전후(±win)만 보고 질량비 + e만 맞추는 짧은 패스 ----
-        theta_mid = theta1
-        hist_mid = []
-        if args.fit_mratio_iters > 0:
-            N = len(obj_paths)
-
-            # 업데이트 마스크: e + masses만 (v0/마찰류는 동결)
-            upd_m = np.zeros(3 * N + 4 + N, dtype=np.float32)
-            upd_m[3 * N + 1] = 1.0  # e
-            upd_m[3 * N + 4:] = 1.0  # masses
-
-            # 스텝 스케일: 질량은 크게, e는 작게
-            scale_m = upd_m.copy()
-            scale_m[3 * N + 1] *= 0.3  # e
-            scale_m[3 * N + 4:] *= 1.2  # masses (신호-대-노이즈 ↑; 1.0~1.5 사이 조절 가능)
-            # (옵션) 첫 물체 질량 고정 → 순수 질량비 식별: 아래 한 줄 주석 해제
-            # scale_m[3 * N + 4 + 0] = 0.0
-
-            # GT에서 첫 동적-동적 접촉 프레임 k* 검출
-            k_star = find_first_pair_contact(gt, args_base["bullet_cache"]["radii"], eps=0.02)
-
-            # contact 중심의 짧은 seconds 자동결정: k*±win을 덮도록
-            win = int(args.fit_contact_window)
-            if k_star != -1:
-                # k* + win 프레임까지는 반드시 포함되도록
-                sec_auto = max(args.dt * (k_star + win + 1), args.dt * (win + 2))
-            else:
-                sec_auto = args.fit_fast_seconds1  # 접촉이 없으면 S1 길이 fallback
-
-            fs_mid = args.fit_mratio_seconds if args.fit_mratio_seconds is not None else min(sec_auto, args.seconds)
-
-            # contact만 보도록 초기 반복의 'tail'을 win에 맞춰 축소
-            args_base_mid = dict(**args_base)
-            if k_star != -1:
-                args_base_mid["post_tail"] = float(win * args.dt)
-
-            theta_mid, traj_mid, hist_mid, loss_mid = spsa_optimize(
-                gt_traj=gt, args_base=args_base_mid, theta0=theta1, N=N,
-                iters=args.fit_mratio_iters, a0=0.06, c0=0.10, Ak=8.0,
-                stride=1, fast_seconds=fs_mid,
-                store_k=max(1, args.viz_samples // 3),
-                update_scale=scale_m, v_bounds=v_bounds
-            )
-        # Stage-2: v 동결, μ/e + masses (길게)
-        fs2 = args.seconds
-        theta_seed = theta_mid if args.fit_mratio_iters > 0 else theta1
-        theta, traj_best, hist2, final_loss = spsa_optimize(
-            gt_traj=gt, args_base=args_base, theta0=theta_seed, N=N,
-            iters=args.fit_iters2, a0=0.08, c0=0.08, Ak=10.0,
-            stride=args.fit_stride2, fast_seconds=fs2,
-            store_k=args.viz_samples,
-            update_scale=scale2, v_bounds=v_bounds
-        )
-        hist = []
-        hist.extend(hist1[:max(1, args.viz_samples // 2)])
-        if args.fit_mratio_iters > 0:
-            hist.extend(hist_mid[:max(1, args.viz_samples // 4)])
-        hist.extend(hist2[:(args.viz_samples - len(hist))])
-    else:
-        theta, traj_best, hist, final_loss = spsa_optimize(
-            gt_traj=gt, args_base=args_base, theta0=theta0, N=N,
-            iters=(args.fit_iters1 + args.fit_iters2),
-            a0=0.08, c0=0.15, Ak=3.0,
-            stride=2, fast_seconds=0.5,
-            store_k=args.viz_samples,
-            update_scale=np.ones(3 * N + 2 + N, np.float32), v_bounds=v_bounds
-        )
-    t1 = perf_counter()
-
+    # Stage-1: v만 (짧게)
+    theta1, traj1, hist1, loss1, duration1 = spsa_optimize(
+        gt_traj=gt_traj, args_base=args_base, theta0=theta0, N=N,
+        iters=fit_iters1, a0=0.08, c0=0.15, Ak=3.0,
+        stride=fit_stride1, fast_seconds=fit_fast_seconds1,
+        store_k=max(1, viz_samples // 2),
+        update_scale=upd1, v_bounds=v_bounds
+    )
+    # Stage-2: v 동결, μ/e + masses (길게)
+    theta_seed = theta1
+    theta, traj_best, hist2, final_loss, duration2 = spsa_optimize(
+        gt_traj=gt_traj, args_base=args_base, theta0=theta_seed, N=N,
+        iters=fit_iters2, a0=0.08, c0=0.08, Ak=10.0,
+        stride=fit_stride2, fast_seconds=seconds,
+        store_k=viz_samples,
+        update_scale=scale2, v_bounds=v_bounds
+    )
+    hist = []
+    hist.extend(hist1[:max(1, viz_samples // 2)])
+    hist.extend(hist2[:(viz_samples - len(hist))])
+    duration = duration1 + duration2
     from math import isfinite
-    print(f"[FIT] done in {t1 - t0:.3f}s")
+    print(f"[FIT] done in {duration:.3f}s")
     v0_est, mu_est, e_est, mu_roll_est, mu_spin_est, m_est = split_params(theta, N)
     print(
         f"[FIT] mu={mu_est:.3f}, e={e_est:.3f}, mu_roll={mu_roll_est:.3f}, mu_spin={mu_spin_est:.3f}, masses={[round(float(x), 3) for x in m_est.tolist()]}")
     for i in range(N):
         vx, vy, vz = v0_est[3 * i:3 * i + 3]
         print(f"  v0[{i}]=({vx:.3f},{vy:.3f},{vz:.3f})")
-    print(f"[FIT] loss={final_loss:.6f}")
-    bw = bodywise_rms(traj_best, gt, stride=args.fit_stride2 if args.fit_2stage else args.fit_stride1,
-                      weights=None)  # 가중치 영향 보고 싶으면 weights_all 넣을 수도 있음
+    length = gt_traj.shape[0]
+    print(f"[FIT] loss={final_loss[1]/length:.6f}")
+    bw = bodywise_rms(traj_best, gt_traj, stride=fit_stride2 ,weights=None)  # 가중치 영향 보고 싶으면 weights_all 넣을 수도 있음
     print(f"[FIT] per-body RMS: {bw.tolist()}")
-
-    # (E) Overlay
-    if not args.no_preview:
-        sv, sf, _ = load_obj_vertices_faces(args.scene)
-        if abs(args.scene_rotx) > 1e-6:
-            R = rotx(args.scene_rotx); sv = (sv @ R.T).astype(np.float32)
-        # 모든 object에 대해 반경 리스트 생성
-        radii = []
-        for _obj in obj_paths:
-            ov, of, _ = load_obj_vertices_faces(_obj)
-            _, r0 = compute_bounding_sphere(ov, center_hint="com")
-            radii.append(r0 * 1.01)
-
-        draw_overlay_o3d(sv, sf, gt, traj_best, hist, radii)
-
-    if args.save:
-        np.save(args.save, traj_best)
-        print(f"[saved] {args.save} shape={traj_best.shape}")
 
     # disconnect Bullet cache
     p.disconnect(args_base["bullet_cache"]["client"])
+
+    return theta, traj_best, hist, final_loss, duration
 
 if __name__ == "__main__":
     main()
