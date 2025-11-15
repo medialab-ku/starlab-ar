@@ -15,8 +15,6 @@ camera_poses2.json
 *.npz
 *.pdf
 *.code-workspace
-6dgs/
-sdgs/
 data/
 jsons/
 splats/
